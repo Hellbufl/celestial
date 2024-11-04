@@ -1,0 +1,44 @@
+[package]
+name = "celestial"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bincode = "1.3.3"
+glam = { version = "0.29.0", features = ["serde"] }
+ocular = { path = "../ocular-rs" }
+pintar = { path = "../pintar" }
+egui = "0.27"
+egui-directx11 = { path = "../egui-directx/egui-directx11" }
+egui-win32 = { path = "../egui-directx/egui-win32" }
+rust-ini = "0.21.1"
+serde = { version = "1.0.208", features = ["derive"] }
+serde-binary = "0.5.0"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+egui-keybind = { path = "../egui-keybind", features = ["serde"] }
+uuid = { version = "1.10.0", features = ["serde", "v4"] }
+native-dialog = "0.7.0"
+lazy_static = "1.5.0"
+serde_json = "1.0.132"
+
+[dependencies.windows]
+version = "0.51.1"
+features = [
+    "Win32_System_LibraryLoader",
+    "Win32_System_Console",
+    "Win32_System_SystemServices",
+    "Win32_System",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Direct3D"
+]

@@ -1,0 +1,7 @@
+EXPORTS
+    CreateDXGIFactory=tether_CreateDXGIFactory
+    CreateDXGIFactory1=tether_CreateDXGIFactory1
+    CreateDXGIFactory2=tether_CreateDXGIFactory2
+    DirectInput8Create=tether_DirectInput8Create
+    D3D11CreateDevice=tether_D3D11CreateDevice
+    D3D11CreateDeviceAndSwapChain=tether_D3D11CreateDeviceAndSwapChain
