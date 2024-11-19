@@ -236,6 +236,7 @@ pub struct PathLog {
 
 	recording_start: Option<time::Instant>,
     pub latest_path: Uuid,
+    latest_time: u64,
 	pub recording_path: Path,
 	pub direct_paths: PathCollection,
     pub path_collections: Vec<PathCollection>,
@@ -255,6 +256,7 @@ impl PathLog {
 
             recording_start: None,
             latest_path: Uuid::new_v4(),
+            latest_time: 0,
             recording_path: Path::new(),
             direct_paths: PathCollection::new(DIRECT_COLLECTION_NAME.to_string()),
             path_collections: Vec::new(),
@@ -326,6 +328,7 @@ impl PathLog {
 
         let time_recorded = self.recording_start.unwrap().elapsed().as_millis() as u64;
         self.recording_path.set_time(time_recorded);
+        self.latest_time = time_recorded;
 
         if self.direct {
             self.direct_paths.add(self.recording_path.clone());
@@ -347,14 +350,15 @@ impl PathLog {
         self.latest_path = self.recording_path.id();
 
         self.recording_path = Path::new();
+        self.recording_start = None;
 
         info!("Recording stopped");
     }
 
-    pub fn time(&self) -> Option<u64> {
+    pub fn time(&self) -> u64 {
         if let Some(rec_start) = self.recording_start {
-            Some(rec_start.elapsed().as_millis() as u64)
-        } else { None }
+            rec_start.elapsed().as_millis() as u64
+        } else { self.latest_time }
     }
 
     pub fn set_direct_mode(&mut self, mode: bool) {

@@ -17,6 +17,8 @@ pub struct ConfigState {
 	pub reset_keybind: Shortcut,
 
 	pub trigger_size: [[f32; 3]; 2],
+    pub timer_size: f32,
+    pub timer_position: [f32; 2],
 
 	pub trigger_color: [[f32; 4]; 2],
     pub fast_color: [f32; 4],
@@ -39,6 +41,8 @@ impl ConfigState {
             reset_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Minus}), None),
 
             trigger_size: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+            timer_size: 24.,
+            timer_position: [400f32, 50f32],
 
             trigger_color: [[0.0, 0.0, 0.0, 0.8], [1.0, 1.0, 1.0, 0.8]],
             fast_color: [0.4, 1.0, 0.2, 0.8],
@@ -49,7 +53,7 @@ impl ConfigState {
             accent_colors: [egui::Color32::from_rgb(85, 149, 255), egui::Color32::from_rgb(156, 85, 255)],
         };
 
-        if let Err(_) = state.read(CONFIG_FILE_NAME.to_string()) {
+        if let Err(_) = state.read("data/".to_string() + CONFIG_FILE_NAME) {
             info!("No config file");
         }
 
@@ -67,6 +71,8 @@ impl ConfigState {
         self.reset_keybind = shortcut_from_string(section.get("reset_keybind").unwrap());
         self.trigger_size[0] = serde_json::from_str(section.get("start_trigger_size").unwrap()).unwrap();
         self.trigger_size[1] = serde_json::from_str(section.get("end_trigger_size").unwrap()).unwrap();
+        self.timer_size = serde_json::from_str(section.get("timer_size").unwrap()).unwrap();
+        self.timer_position = serde_json::from_str(section.get("timer_position").unwrap()).unwrap();
         self.trigger_color[0] = serde_json::from_str(section.get("start_trigger_color").unwrap()).unwrap();
         self.trigger_color[1] = serde_json::from_str(section.get("end_trigger_color").unwrap()).unwrap();
         self.fast_color = serde_json::from_str(section.get("fast_color").unwrap()).unwrap();
@@ -91,6 +97,8 @@ impl ConfigState {
             .set("reset_keybind", shortcut_to_string(self.reset_keybind))
             .set("start_trigger_size", format!("{:?}", self.trigger_size[0]))
             .set("end_trigger_size", format!("{:?}", self.trigger_size[1]))
+            .set("timer_size", format!("{:?}", self.timer_size))
+            .set("timer_position", format!("{:?}", self.timer_position))
             .set("start_trigger_color", format!("{:?}", self.trigger_color[0]))
             .set("end_trigger_color", format!("{:?}", self.trigger_color[1]))
             .set("fast_color", format!("{:?}", self.fast_color))

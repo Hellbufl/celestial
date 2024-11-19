@@ -23,7 +23,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use glam::{Vec3, Mat3};
-use egui::{Color32, Event};
+use egui::{Color32, Event, RichText};
 use egui_directx11::DirectX11Renderer;
 use egui_win32::InputManager;
 use egui_keybind::{Bind, Keybind, Shortcut};
@@ -142,7 +142,6 @@ impl UIState {
 
         unsafe {
             state.selected_paths.insert(PATHLOG.as_ref().unwrap().direct_paths.id(), Vec::new());
-            // state.selected_paths.insert(PATHLOG.as_ref().unwrap().path_collections[0].id(), Vec::new());
         }
 
         state
@@ -395,15 +394,23 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             let mut egui_state = EGUI_STATE.as_mut().unwrap();
 
             dx_renderer
-                .paint(&this, &mut egui_state, input, |ctx, state| {
+                .paint(&this, &mut egui_state, input.clone(), |ctx, state| {
                     egui::Window::new("Celestial")
                         .default_size(egui::vec2(300f32, 300f32))
                         .vscroll(true)
-                        .resizable([true, true])
+                        .resizable(true)
                         .min_size([300.0, 300.0])
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
                             draw_ui(ui);
+                        });
+                    
+                    egui::Window::new("Timer")
+                        .resizable(false)
+                        .title_bar(false)
+                        .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
+                        .show(ctx, |ui| {
+                            draw_timer(ui);
                         });
                     })
                 .expect("successful render");
@@ -496,6 +503,19 @@ fn draw_ui(ui: &mut egui::Ui) {
         draw_paths_tab(ui);
         draw_config_tab(ui);
         draw_credits_tab(ui);
+    }
+}
+
+fn draw_timer(ui: &mut egui::Ui) {
+    unsafe {
+        let pathlog = PATHLOG.as_ref().unwrap();
+        let config = CONFIG_STATE.as_ref().unwrap();
+
+        let time = pathlog.time();
+        ui.add(egui::Label::new(
+            RichText::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000)))
+            .size(config.timer_size)
+        ).selectable(false));
     }
 }
 
@@ -680,6 +700,9 @@ unsafe fn draw_path(path: &Path, collection: &PathCollection, ui: &mut egui::Ui)
     let state = EGUI_STATE.as_mut().unwrap();
     let config = CONFIG_STATE.as_mut().unwrap();
 
+    if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+    if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
 
         let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
@@ -720,7 +743,7 @@ unsafe fn draw_path(path: &Path, collection: &PathCollection, ui: &mut egui::Ui)
         if selected.contains(&path.id()) { ui.style_mut().visuals.override_text_color = Some(config.select_color.as_color32()); }
 
         let time = path.get_time();
-        if ui.label(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).clicked() {
+        if ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true)).clicked() {
             match mods {
                 1 => {
                     let last_id = *selected.last().unwrap_or(&(path.id()));
@@ -802,6 +825,12 @@ unsafe fn draw_config_tab(ui: &mut egui::Ui) {
                 ui.add(egui::DragValue::new(&mut config.trigger_size[1][0]).speed(0.1).clamp_range(0.1..=10.0));
             });
             ui.end_row();
+
+            ui.label("Timer Size");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(egui::DragValue::new(&mut config.timer_size).speed(0.5).clamp_range(6.9..=69.0));
+            });
+            ui.end_row();
         });
 
     ui.add_space(20.0);
@@ -869,7 +898,7 @@ unsafe fn draw_config_tab(ui: &mut egui::Ui) {
             });
             ui.end_row();
 
-            ui.label("Start Trigger");
+            ui.label("End Trigger");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut tmp_color = config.trigger_color[1].as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1161,9 +1190,6 @@ fn main() {
     log_setup();
 
     unsafe {
-        // let config = ConfigState::new();
-        // let mut state = UIState::new();
-
         PATHLOG = Some(PathLog::new());
         CONFIG_STATE = Some(ConfigState::new());
         EGUI_STATE = Some(UIState::new());
@@ -1206,3 +1232,4 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 // - popup messages
 // - move paths between collections
 // - should you be able to duplicate paths?
+// - teleporation
