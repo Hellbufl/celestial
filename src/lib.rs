@@ -29,7 +29,7 @@ use egui_win32::InputManager;
 use egui_keybind::{Bind, Keybind, Shortcut};
 use uuid::Uuid;
 use native_dialog::FileDialog;
-use lazy_static::lazy_static;
+// use lazy_static::lazy_static;
 
 mod tether;
 pub mod gamedata;
@@ -47,6 +47,8 @@ use pintar::Pintar;
 static mut PATHLOG : Option<PathLog> = None;
 static mut CONFIG_STATE : Option<ConfigState> = None;
 static mut EGUI_STATE : Option<UIState> = None;
+
+static mut DEBUG_STATE : Option<DebugState> = None;
 
 static mut PINTAR : Option<Pintar> = None;
 static mut EGUI_RENDERER : Option<DirectX11Renderer> = None;
@@ -121,6 +123,11 @@ struct UIState {
     solo_collections: HashMap<Uuid, bool>,
 
     // colors: [egui::ecolor::Hsva; 7],
+}
+
+struct DebugState {
+    frame_time: u64,
+    copy_time: u64,
 }
 
 impl UIState {
@@ -274,10 +281,14 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
 }
 
 extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT {
+    let frame_start = Instant::now();
+
     unsafe {
         init_globals(&this);
     
         if let Some(pintar) = PINTAR.as_mut() {
+            DEBUG_STATE.as_mut().unwrap().copy_time = 0;
+
             let pathlog = PATHLOG.as_mut().unwrap();
             let config = CONFIG_STATE.as_ref().unwrap();
             let state = EGUI_STATE.as_mut().unwrap();
@@ -289,7 +300,10 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
 
             let mut visible_collection = PathCollection::new("Visible".to_string());
+            // let mut visible
             let mut selected : Vec<Uuid> = Vec::new();
+            
+            // pintar.add_default_mesh(pintar::primitives::cube::new([1.0, 0.0, 1.0, 1.0]).scale([0.1, 0.1, 0.1]).translate(gamedata::get_view_target()));
 
             for collection in &pathlog.path_collections {
                 if !state.solo_collections.contains_key(&collection.id()) { state.solo_collections.insert(collection.id(), false); }
@@ -305,9 +319,9 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 if !visible { continue; }
 
                 for path in collection.paths() {
-                    if visible_collection.paths().iter().position(|p| p.id() == path.id()).is_some() { continue; }
+                    if visible_collection.paths().contains(path) { continue; }
 
-                    visible_collection.add(path.clone()); // mmh :/
+                    visible_collection.add(path.clone());
 
                     if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
                         selected.push(path.id());
@@ -412,11 +426,20 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .show(ctx, |ui| {
                             draw_timer(ui);
                         });
+                    
+                    egui::Window::new("Debug")
+                        .resizable(true)
+                        .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
+                        .show(ctx, |ui| {
+                            draw_debug(ui);
+                        });
                     })
                 .expect("successful render");
 
             egui_state.process_events();
         }
+
+        DEBUG_STATE.as_mut().unwrap().frame_time = frame_start.elapsed().as_micros() as u64;
     }
 
     // Call and return the result of the original method.
@@ -474,9 +497,16 @@ fn render_path(path: &Path, pintar: &mut Pintar, color: [f32; 4], thickness: f32
 
     pintar.add_line(path.get_node(0), path.get_node(1), color, thickness);
 
-    for node in &path.get_nodes()[2..] {
-        pintar.extend_line(*node, color, thickness);
+    let clone_start = Instant::now();
+    // for node in &path.get_nodes()[2..] {
+    //     pintar.extend_line(*node, color, thickness);
+    // }
+    let nodes = &path.get_nodes()[2..];
+    for n in (0..nodes.len()).step_by(2) {
+        pintar.extend_line(nodes[n], color, thickness);
     }
+    unsafe { DEBUG_STATE.as_mut().unwrap().copy_time += clone_start.elapsed().as_micros() as u64; }
+    
 }
 
 fn draw_ui(ui: &mut egui::Ui) {
@@ -515,6 +545,18 @@ fn draw_timer(ui: &mut egui::Ui) {
         ui.add(egui::Label::new(
             RichText::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000)))
             .size(config.timer_size)
+        ).selectable(false));
+    }
+}
+
+fn draw_debug(ui: &mut egui::Ui) {
+    unsafe {
+        // let pathlog = PATHLOG.as_ref().unwrap();
+        // let config = CONFIG_STATE.as_ref().unwrap();
+        let debug = DEBUG_STATE.as_ref().unwrap();
+
+        ui.add(egui::Label::new(
+            RichText::new(format!("{:?} / {:?}", debug.copy_time, debug.frame_time))
         ).selectable(false));
     }
 }
@@ -1193,6 +1235,7 @@ fn main() {
         PATHLOG = Some(PathLog::new());
         CONFIG_STATE = Some(ConfigState::new());
         EGUI_STATE = Some(UIState::new());
+        DEBUG_STATE = Some(DebugState{ frame_time: 0, copy_time: 0 });
     }
 
     ocular::hook_present(hk_present);

@@ -34,3 +34,13 @@ pub fn get_view_matrix() -> [[f32; 4]; 4] {
 
     return view_proj;
 }
+
+// test
+
+// pub fn get_view_target() -> [f32; 3] {
+//     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+//     let target: [f32; 3] = unsafe { std::ptr::read((process_start + 0x1020890) as *const _) };
+
+//     return target;
+// }

@@ -76,6 +76,12 @@ impl Path {
     }
 }
 
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
 #[derive(Clone, Copy)]
 #[derive(Serialize, Deserialize)]
 pub struct BoxCollider {
@@ -318,6 +324,7 @@ impl PathLog {
         self.recording = false;
         self.recording_path.clear_nodes();
         self.recording_path.set_time(0);
+        self.recording_start = None;
         info!("Recording reset");
     }
 
