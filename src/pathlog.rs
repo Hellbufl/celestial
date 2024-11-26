@@ -11,7 +11,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
-pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
+// pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
@@ -42,7 +42,7 @@ impl Path {
         self.nodes[index]
     }
 
-    pub fn get_nodes(&self) -> Vec<[f32; 3]> {
+    pub fn nodes(&self) -> Vec<[f32; 3]> {
         self.nodes.clone()
     }
 
@@ -50,7 +50,7 @@ impl Path {
         self.time = new_time;
     }
 
-    pub fn get_time(&self) -> u64 {
+    pub fn time(&self) -> u64 {
         self.time
     }
 
@@ -156,7 +156,7 @@ impl PathCollection {
 
     pub fn add(&mut self, new_path: Path) {
         for i in 0..self.paths.len() {
-            if self.paths[i].get_time() < new_path.get_time() { continue; }
+            if self.paths[i].time() < new_path.time() { continue; }
             self.paths.insert(i, new_path);
             return;
         }
