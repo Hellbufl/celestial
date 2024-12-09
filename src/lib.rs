@@ -1,13 +1,6 @@
 use std::ffi::c_void;
-// use std::fs::OpenOptions;
-// use std::io::Write;
 use std::path::PathBuf;
-// use std::sync::mpsc;
-// use std::thread;
 use std::time::Instant;
-// use std::sync::{Arc, Mutex};
-// use std::collections::{HashMap, VecDeque};
-// use pintar::mesh::DefaultMesh;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
 use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
@@ -15,22 +8,16 @@ use windows::Win32::Foundation::{BOOL, HMODULE, LRESULT, WPARAM, LPARAM};
 use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::Graphics::Direct3D11::{ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11DepthStencilView};
-// use windows::Win32::UI;
 use windows::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrA, CallWindowProcW, WNDPROC, GWLP_WNDPROC};
 
 use tracing::*;
-// use tracing_appender::*;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-// use glam::{Vec3, Mat3};
 use egui::RichText;
 use egui_directx11::DirectX11Renderer;
 use egui_win32::InputManager;
-// use egui_keybind::{Bind, Keybind, Shortcut};
 use uuid::Uuid;
-// use native_dialog::FileDialog;
-// use lazy_static::lazy_static;
 
 mod tether;
 pub mod gamedata;
@@ -99,9 +86,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
     unsafe {
         init_globals(&this);
-
-        // let pathlog = PATHLOG.as_mut().unwrap();
-        // let config = CONFIG_STATE.as_mut().unwrap();
     
         if let Some(pintar) = PINTAR.as_mut() {
             DEBUG_STATE.as_mut().unwrap().copy_time = 0;
@@ -110,10 +94,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             let pathlog = &mut GLOBAL_STATE.as_mut().unwrap().pathlog;
             let config = &GLOBAL_STATE.as_mut().unwrap().config;
 
-            // let pathlog = PATHLOG.as_mut().unwrap();
-            // let config = CONFIG_STATE.as_ref().unwrap();
-            // let state = EGUI_STATE.as_mut().unwrap();
-
             pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
 
             pintar.set_default_view_proj(gamedata::get_view_matrix());
@@ -121,11 +101,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
 
             let mut visible_collection = PathCollection::new("Visible".to_string());
-            // let mut visible
             let mut selected : Vec<Uuid> = Vec::new();
             
-            // pintar.add_default_mesh(pintar::primitives::cube::new([1.0, 0.0, 1.0, 1.0]).scale([0.1, 0.1, 0.1]).translate(gamedata::get_view_target()));
-
             for collection in &pathlog.path_collections {
                 if !state.solo_collections.contains_key(&collection.id()) { state.solo_collections.insert(collection.id(), false); }
                 if !state.mute_collections.contains_key(&collection.id()) { state.mute_collections.insert(collection.id(), false); }
@@ -142,7 +119,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 for path in collection.paths() {
                     if visible_collection.paths().contains(path) { continue; }
 
-                    visible_collection.add(path.clone());
+                    visible_collection.add(path.clone(), None);
 
                     if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
                         selected.push(path.id());
@@ -319,19 +296,13 @@ extern "system" fn hk_om_set_render_targets(
 fn render_path(path: &Path, pintar: &mut Pintar, color: [f32; 4], thickness: f32) {
     if path.len() < 2 { return; }
 
-    // let clone_start = Instant::now();
-
     let debug_benchmark = pintar.add_line(path.nodes(), color, thickness);
 
-    // unsafe { DEBUG_STATE.as_mut().unwrap().copy_time += clone_start.elapsed().as_micros() as u64; }
     unsafe { DEBUG_STATE.as_mut().unwrap().copy_time += debug_benchmark; }
-    
 }
 
 fn draw_debug(ui: &mut egui::Ui) {
     unsafe {
-        // let pathlog = PATHLOG.as_ref().unwrap();
-        // let config = CONFIG_STATE.as_ref().unwrap();
         let debug = DEBUG_STATE.as_ref().unwrap();
 
         ui.add(egui::Label::new(
@@ -459,12 +430,12 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 
 // TODO LIST
 
-// - high pass filter
-// - delete triggers
 // - move collections
+// - fix selection
 // - move paths between collections
-// - should you be able to duplicate paths?
 
 // - teleporation
 // - popup messages
 // - fix all the bugs :)
+
+// - should you be able to duplicate paths? For now: no

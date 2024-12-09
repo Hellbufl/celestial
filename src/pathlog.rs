@@ -1,7 +1,6 @@
-use std::f32::consts::PI;
-use std::{str::FromStr, time};
+use std::collections::HashMap;
+use std::{fs, time};
 use std::vec::Vec;
-use std::{collections, fs};
 
 use tracing::*;
 
@@ -125,6 +124,13 @@ impl BoxCollider {
     }
 }
 
+pub enum HighPassFilter {
+    GOLD,
+    PATH {
+        id: Uuid,
+    },
+}
+
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
 pub struct PathCollection {
@@ -154,13 +160,37 @@ impl PathCollection {
         &self.paths
     }
 
-    pub fn add(&mut self, new_path: Path) {
-        for i in 0..self.paths.len() {
-            if self.paths[i].time() < new_path.time() { continue; }
-            self.paths.insert(i, new_path);
-            return;
+    pub fn add(&mut self, new_path: Path, high_pass: Option<&HighPassFilter>) {
+        match high_pass {
+            Some(HighPassFilter::GOLD) => {
+                if self.paths.len() == 0 || self.paths[0].time() > new_path.time() {
+                    self.paths.insert(0, new_path);
+                }
+                return;
+            }
+            Some(HighPassFilter::PATH { id }) => {
+                if self.paths.is_empty() {
+                    self.paths.push(new_path);
+                    return;
+                }
+
+                for i in 0..self.paths.len() {
+                    if self.paths[i].time() > new_path.time() {
+                        self.paths.insert(i, new_path);
+                        return;
+                    }
+                    if self.paths[i].id() == *id { return; }
+                }
+            }
+            None => {
+                for i in 0..self.paths.len() {
+                    if self.paths[i].time() < new_path.time() { continue; }
+                    self.paths.insert(i, new_path);
+                    return;
+                }
+                self.paths.push(new_path);
+            }
         }
-        self.paths.push(new_path);
     }
 
     pub fn remove(&mut self, id: Uuid) {
@@ -239,15 +269,16 @@ pub struct PathLog {
 	autosave: bool,
 
     current_file: Option<String>,
-
 	recording_start: Option<time::Instant>,
     pub latest_path: Uuid,
     latest_time: u64,
 	pub recording_path: Path,
 	pub direct_paths: PathCollection,
     pub path_collections: Vec<PathCollection>,
-    pub active_collections: Vec<Uuid>,
+    // pub active_collections: Vec<Uuid>,
+    pub active_collection: Option<Uuid>,
     pub triggers: [Option<BoxCollider>; 2],
+    pub filters: HashMap<Uuid, HighPassFilter>,
 }
 
 impl PathLog {
@@ -266,8 +297,10 @@ impl PathLog {
             recording_path: Path::new(),
             direct_paths: PathCollection::new(DIRECT_COLLECTION_NAME.to_string()),
             path_collections: Vec::new(),
-            active_collections: Vec::new(),
+            // active_collections: Vec::new(),
+            active_collection: None,
             triggers: [None, None],
+            filters: HashMap::new(),
         };
 
         if !std::fs::exists("Paths").expect("wtf bro where is your dll") && std::fs::create_dir("Paths").is_err() {
@@ -338,12 +371,14 @@ impl PathLog {
         self.latest_time = time_recorded;
 
         if self.direct {
-            self.direct_paths.add(self.recording_path.clone());
+            self.direct_paths.add(self.recording_path.clone(), None);
         }
         else {
             for i in 0..self.path_collections.len() {
-                if self.active_collections.contains(&self.path_collections[i].id()) {
-                    self.path_collections[i].add(self.recording_path.clone());
+                // if self.active_collections.contains(&self.path_collections[i].id()) {
+                let id = self.path_collections[i].id();
+                if self.active_collection == Some(id) {
+                    self.path_collections[i].add(self.recording_path.clone(), self.filters.get(&id));
                 }
             }
 
@@ -378,10 +413,10 @@ impl PathLog {
 
 	pub fn insert(&mut self, new_path: &Path, collection_id: Uuid) {
         if let Some(index) = self.path_collections.iter().position(|coll| coll.id() == collection_id) {
-            self.path_collections[index].add(new_path.clone());
+            self.path_collections[index].add(new_path.clone(), self.filters.get(&collection_id));
         }
         else if self.direct_paths.id() == collection_id {
-            self.direct_paths.add(new_path.clone());
+            self.direct_paths.add(new_path.clone(), None);
         }
         else { error!("Collection-ID '{collection_id}' does not exist!") }
     }
@@ -430,7 +465,10 @@ impl PathLog {
         self.triggers[index] = Some(BoxCollider::new(player_center, rotation, size));
     }
 
-	pub fn destroy_triggers(&mut self) {
+	pub fn clear_triggers(&mut self) {
+        for collection in &self.path_collections {
+            if !collection.paths.is_empty() { return; }
+        }
         self.triggers = [None, None];
     }
 }

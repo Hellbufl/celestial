@@ -2,12 +2,14 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
+use egui::epaint::Shadow;
+use egui::Vec2;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
 
-use crate::config::{ConfigState, AsColor32, AsHsva};
-use crate::pathlog::{PathLog, PathCollection, Path};
+use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
+use crate::pathlog::{self, HighPassFilter, Path, PathCollection, PathLog};
 use crate::gamedata;
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
@@ -40,6 +42,7 @@ pub enum UIEvent {
     StartRecording,
     StopRecording,
     ResetRecording,
+    ClearTriggers,
     CreateCollection,
     RenameCollection {
         id: Uuid,
@@ -48,8 +51,15 @@ pub enum UIEvent {
     DeleteCollection {
         id: Uuid,
     },
-    ToggleCollection {
+    ToggleActive {
         id: Uuid,
+    },
+    ToggleGoldFilter {
+        collection_id: Uuid,
+    },
+    SetPathFilter {
+        collection_id: Uuid,
+        path_id: Uuid,
     },
     SaveComparison,
     LoadComparison,
@@ -73,8 +83,6 @@ pub struct UIState {
     pub solo_paths: HashMap<Uuid, bool>,
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
-
-    // colors: [egui::ecolor::Hsva; 7],
 }
 
 impl UIState {
@@ -136,6 +144,9 @@ impl UIState {
                 UIEvent::ResetRecording => {
                     pathlog.reset();
                 }
+                UIEvent::ClearTriggers => {
+                    pathlog.clear_triggers();
+                }
                 UIEvent::CreateCollection => {
                     let new_collection = PathCollection::new(DEFAULT_COLLECTION_NAME.to_string());
                     self.mute_collections.insert(new_collection.id(), false);
@@ -158,12 +169,40 @@ impl UIState {
                         pathlog.path_collections.remove(index);
                     }
                 }
-                UIEvent::ToggleCollection { id } => {
-                    if let Some(index) = pathlog.active_collections.iter().position(|x| *x == id) {
-                        pathlog.active_collections.remove(index);
+                UIEvent::ToggleActive { id } => {
+                    // if let Some(index) = pathlog.active_collections.iter().position(|x| *x == id) {
+                    //     pathlog.active_collections.remove(index);
+                    // }
+                    // else {
+                    //     pathlog.active_collections.push(id);
+                    // }
+
+                    if pathlog.active_collection == Some(id) {
+                        pathlog.active_collection = None;
                     }
                     else {
-                        pathlog.active_collections.push(id);
+                        pathlog.active_collection = Some(id);
+                    }
+                }
+                UIEvent::ToggleGoldFilter { collection_id } => {
+                    if !pathlog.filters.contains_key(&collection_id) {
+                        pathlog.filters.insert(collection_id, HighPassFilter::GOLD);
+                    }
+                    else {
+                        if let Some(HighPassFilter::GOLD) = pathlog.filters.get(&collection_id) {
+                            pathlog.filters.remove(&collection_id);
+                        }
+                        else {
+                            *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::GOLD;
+                        }
+                    }
+                }
+                UIEvent::SetPathFilter { collection_id, path_id } => {
+                    if let Some(filter) = pathlog.filters.get_mut(&collection_id) {
+                        *filter = HighPassFilter::PATH { id: path_id };
+                    }
+                    else {
+                        pathlog.filters.insert(collection_id, HighPassFilter::PATH{ id: path_id });
                     }
                 }
                 UIEvent::SaveComparison => {
@@ -254,18 +293,23 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
         if config.reset_keybind.compare_to_event(e) {
             egui.events.push_back(UIEvent::ResetRecording);
         }
+
+        if config.clear_keybind.compare_to_event(e) {
+            egui.events.push_back(UIEvent::ClearTriggers);
+        }
     }
 }
 
 
 pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, pathlog: &mut PathLog) {
     ui.style_mut().visuals.selection.bg_fill = config.accent_colors[0];
+
     ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
     // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         ui.selectable_value(&mut state.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
-        ui.selectable_value(&mut state.tab, Tab::Paths, egui::RichText::new("Paths").strong());
+        // ui.selectable_value(&mut state.tab, Tab::Paths, egui::RichText::new("Paths").strong());
         ui.selectable_value(&mut state.tab, Tab::Config, egui::RichText::new("Config").strong());
         ui.selectable_value(&mut state.tab, Tab::Credits, egui::RichText::new("Credits").strong());
     });
@@ -305,8 +349,28 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
             // if ui.interact_bg(egui::Sense::click()).clicked() {
             //     state.renaming_collection = None;
             // }
+            let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
+            let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                let mut arm_button_text = egui::RichText::new("\u{2B55}");
+                if pathlog.active_collection == Some(collection.id()) {
+                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
+                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[1];
+                    arm_button_text = arm_button_text.strong();
+                }
+
+                if ui.add(
+                    egui::Button::new(arm_button_text)
+                        .min_size(egui::vec2(19.0, 19.0))
+                        .rounding(egui::Rounding::same(10.0))
+                    ).clicked() {
+                    state.events.push_back(UIEvent::ToggleActive { id: collection.id() });
+                }
+
+                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
                 if state.renaming_collection == Some(collection.id()) {
                     let response = ui.add(egui::TextEdit::singleline(&mut state.renaming_name).desired_width(200.0));
                     if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -328,10 +392,9 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     }
                 }
 
-                let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
-                let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
+                // let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
+                // let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
 
-                // ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
                 let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
                 if *state.solo_collections.get(&collection.id()).unwrap() {
@@ -360,24 +423,39 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
 
                 ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-
-                let mut arm_button_text = egui::RichText::new("\u{2B55}");
-                if pathlog.active_collections.contains(&collection.id()) {
-                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
-                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[1];
-                    arm_button_text = arm_button_text.strong();
+                
+                let mut mute_button_text = egui::RichText::new("\u{2B06}");
+                if let Some(HighPassFilter::GOLD) = pathlog.filters.get(&collection.id()) {
+                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    mute_button_text = mute_button_text.strong();
                 }
 
-                if ui.add(
-                    egui::Button::new(arm_button_text)
-                        .min_size(egui::vec2(19.0, 19.0))
-                        .rounding(egui::Rounding::same(10.0))
-                    ).clicked() {
-                    state.events.push_back(UIEvent::ToggleCollection { id: collection.id() });
+                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.events.push_back(UIEvent::ToggleGoldFilter { collection_id: collection.id() });
                 }
 
                 ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                
+                // let mut arm_button_text = egui::RichText::new("\u{2B55}");
+                // // if pathlog.active_collections.contains(&collection.id()) {
+                // if pathlog.active_collection == Some(collection.id()) {
+                //     ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
+                //     ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[1];
+                //     arm_button_text = arm_button_text.strong();
+                // }
+
+                // if ui.add(
+                //     egui::Button::new(arm_button_text)
+                //         .min_size(egui::vec2(19.0, 19.0))
+                //         .rounding(egui::Rounding::same(10.0))
+                //     ).clicked() {
+                //     state.events.push_back(UIEvent::ToggleActive { id: collection.id() });
+                // }
+
+                // ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                // ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
             });
             ui.end_row();
         });
@@ -401,7 +479,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     }
             
                     for path in collection.paths() {
-                        draw_path(ui, state, config, path, &collection);
+                        draw_path(ui, state, config, pathlog, path, &collection);
                     }
                 });
             });
@@ -448,13 +526,13 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, 
         }
 
         for path in pathlog.direct_paths.paths() {
-            draw_path(ui, state, config, path, &pathlog.direct_paths);
+            draw_path(ui, state, config, pathlog, path, &pathlog.direct_paths);
         }
     });
 }
 
 // TODO: select paths through events
-fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, path: &Path, collection: &PathCollection) {
+fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog, path: &Path, collection: &PathCollection) {
     if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
     if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
@@ -498,7 +576,8 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, path:
         if selected.contains(&path.id()) { ui.style_mut().visuals.override_text_color = Some(config.select_color.as_color32()); }
 
         let time = path.time();
-        if ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true)).clicked() {
+        let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
+        if time_response.clicked() {
             match mods {
                 1 => {
                     let last_id = *selected.last().unwrap_or(&(path.id()));
@@ -520,8 +599,20 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, path:
                 }
             }
         }
+        if time_response.secondary_clicked() {
+            state.events.push_back(UIEvent::SetPathFilter { collection_id: collection.id(), path_id: path.id() });
+        }
 
         ui.style_mut().visuals.override_text_color = None;
+
+        // TODO: maybe implement PartialEq for HighPassFilter
+        if let Some(filter) = pathlog.filters.get(&collection.id()) {
+            if let HighPassFilter::PATH{ id } = filter {
+                if *id == path.id() {
+                    ui.label("\u{2B06}");
+                }
+            }
+        }
     });
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
@@ -546,13 +637,13 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.label("Direct Recording Mode");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if toggle_switch(ui, &mut config.direct_mode).clicked() {
-                    state.events.push_back(UIEvent::ChangeDirectMode { new: config.direct_mode });
-                }
-            });
-            ui.end_row();
+            // ui.label("Direct Recording Mode");
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            //     if toggle_switch(ui, &mut config.direct_mode).clicked() {
+            //         state.events.push_back(UIEvent::ChangeDirectMode { new: config.direct_mode });
+            //     }
+            // });
+            // ui.end_row();
 
             ui.label("Comparison Autosave");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -594,17 +685,17 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.label("Toggle window");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut config.toggle_window_keybind, "toggle_window_keybind"));
-            });
-            ui.end_row();
+            // ui.label("Toggle window");
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            //     ui.add(Keybind::new(&mut config.toggle_window_keybind, "toggle_window_keybind"));
+            // });
+            // ui.end_row();
 
             if config.direct_mode {
-                ui.label("Start recording");
+                ui.label("Start Recording");
             }
             else {
-                ui.label("Spawn start trigger");
+                ui.label("Spawn Start Trigger");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.start_keybind, "start_keybind"));
@@ -612,19 +703,25 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             ui.end_row();
 
             if config.direct_mode {
-                ui.label("Stop recording");
+                ui.label("Stop Recording");
             }
             else {
-                ui.label("Spawn end trigger");
+                ui.label("Spawn End Trigger");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.stop_keybind, "stop_keybind"));
             });
             ui.end_row();
 
-            ui.label("Reset recording");
+            ui.label("Reset Recording");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.reset_keybind, "reset_keybind"));
+            });
+            ui.end_row();
+
+            ui.label("Delete Triggers");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(Keybind::new(&mut config.clear_keybind, "clear_keybind"));
             });
             ui.end_row();
         });
