@@ -152,8 +152,15 @@ impl PathCollection {
         self.id
     }
 
-    pub fn get_path(&self, index: usize) -> Path {
-        self.paths[index].clone()
+    // pub fn get_path(&self, index: usize) -> Path {
+    //     self.paths[index].clone()
+    // }
+
+    pub fn get_path(&self, id: Uuid) -> Option<&Path> {
+        match self.paths.iter().position(|p| p.id() == id) {
+            Some(i) => Some(&self.paths[i]),
+            None => None,
+        }
     }
 
     pub fn paths(&self) -> &Vec<Path> {

@@ -205,8 +205,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
             ui::check_input(&input, &mut global_state.egui, &mut global_state.config);
 
-            // let mut egui_state = EGUI_STATE.as_mut().unwrap();
-
             dx_renderer
                 .paint(&this, &mut global_state, input.clone(), |ctx, state| {
                     egui::Window::new("Celestial")
@@ -226,18 +224,19 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .show(ctx, |ui| {
                             ui::draw_timer(ui, &mut state.config, &mut state.pathlog);
                         });
-                    
+
+                    #[cfg(debug_assertions)] {
                     egui::Window::new("Debug")
                         .resizable(true)
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
                             draw_debug(ui);
                         });
+                    }
                     })
                 .expect("successful render");
 
             global_state.egui.process_events(&mut global_state.pathlog);
-            // egui_state.process_events(pathlog);
         }
 
         DEBUG_STATE.as_mut().unwrap().frame_time = frame_start.elapsed().as_micros() as u64;
@@ -305,8 +304,20 @@ fn draw_debug(ui: &mut egui::Ui) {
     unsafe {
         let debug = DEBUG_STATE.as_ref().unwrap();
 
+        // ui.add(egui::Label::new(
+        //     RichText::new(format!("{:?} / {:?}", debug.copy_time, debug.frame_time))
+        // ).selectable(false));
+
         ui.add(egui::Label::new(
-            RichText::new(format!("{:?} / {:?}", debug.copy_time, debug.frame_time))
+            RichText::new(format!("{:x?}", gamedata::get_player_actor()))
+        ).selectable(false));
+
+        ui.add(egui::Label::new(
+            RichText::new(format!("{:x?}", gamedata::get_player_handle()))
+        ).selectable(false));
+
+        ui.add(egui::Label::new(
+            RichText::new(format!("{:?}", gamedata::get_player_position()))
         ).selectable(false));
     }
 }
@@ -428,13 +439,19 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
     BOOL::from(true)
 }
 
+// changing page protection flags for code injection
+// maybe ill need this for something
+// let mut old = windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(0);
+// let wo =windows::Win32::System::Memory::VirtualProtect(addr as *const , 8, windows::Win32::System::Memory::PAGEPROTECTION_FLAGS(0x4), &mut old as *mut );
+
 // TODO LIST
 
-// - move collections
-// - fix selection
+// - fix latest time highlight
 // - move paths between collections
+// - move collections
 
-// - teleporation
+// - fix shift selection
+// - save timer position
 // - popup messages
 // - fix all the bugs :)
 

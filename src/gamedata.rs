@@ -14,6 +14,17 @@ pub fn get_player_position() -> [f32; 3] {
     return player_pos;
 }
 
+pub fn set_player_position(new_pos: [f32; 3]) {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
+    if player_addr == 0 { return }
+
+    unsafe{ 
+        std::ptr::write((player_addr + 0x50) as *mut _, new_pos);
+    };
+}
+
 pub fn get_player_rotation() -> [f32; 3] {
     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
 
@@ -27,10 +38,89 @@ pub fn get_player_rotation() -> [f32; 3] {
     return player_rot;
 }
 
+pub fn set_player_rotation(new_rot: [f32; 3]) {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x01020BE0) as *const _) };
+    if player_addr == 0 { return }
+
+    unsafe{ 
+        std::ptr::write((player_addr + 0x90) as *mut _, new_rot);
+    };
+}
+
 pub fn get_view_matrix() -> [[f32; 4]; 4] {
     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
 
     let view_proj: [[f32; 4]; 4] = unsafe { std::ptr::read((process_start + 0x11553B0) as *const _) };
 
     return view_proj;
+}
+
+pub fn get_player_state() -> [u32; 2] {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x01020BE0) as *const _) };
+    if player_addr == 0 {
+        return [0, 0];
+    }
+
+    let player_state: [u32; 2] = unsafe { std::ptr::read((player_addr + 0x670) as *const _) };
+
+    return player_state;
+}
+
+pub fn set_player_state(new_state: [u32; 2]) {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x01020BE0) as *const _) };
+    if player_addr == 0 { return }
+
+    unsafe{ 
+        std::ptr::write((player_addr + 0x670) as *mut _, new_state);
+    };
+}
+
+// Testing
+
+pub fn get_player_actor() -> usize {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
+
+    return player_addr;
+}
+
+pub fn get_player_handle() -> u32 {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: u32 = unsafe { std::ptr::read((process_start + 0x125025C) as *const _) };
+
+    return player_addr;
+}
+
+// pub fn get_noclip_state() -> u32 {
+//     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+//     let player_addr: u32 = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
+//     if player_addr == 0 {
+//         return 0;
+//     }
+
+//     let noclip_state: [u32; 1] = unsafe { std::ptr::read((player_addr + 0x14E0) as *const _) };
+
+//     return noclip_state[0];
+// }
+
+pub fn get_noclip_state() -> u32 {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
+    if player_addr == 0 {
+        return 0;
+    }
+
+    let noclip_state: u32 = unsafe { std::ptr::read((player_addr + 0x14E0) as *const _) };
+
+    return noclip_state;
 }

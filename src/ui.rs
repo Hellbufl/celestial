@@ -63,11 +63,14 @@ pub enum UIEvent {
     },
     SaveComparison,
     LoadComparison,
-    // SelectPath {
-    //     id: u64,
-    //     collection: String,
-    //     modifier: u8,
-    // },
+    SelectPath {
+        path_id: Uuid,
+        collection_id: Uuid,
+        modifier: u8,
+    },
+    Teleport {
+        stage: u8,
+    },
 }
 
 pub struct UIState {
@@ -239,6 +242,57 @@ impl UIState {
                         else { loop_events.push_back(UIEvent::LoadComparison); }
                     }
                 }
+                UIEvent::SelectPath { path_id, collection_id, modifier } => {
+                    let collection = &pathlog.path_collections[pathlog.path_collections.iter().position(|c| c.id() == collection_id).unwrap()];
+                    let path = collection.get_path(path_id).unwrap();
+
+                    let selected = self.selected_paths.get_mut(&collection.id()).unwrap();
+
+                    match modifier {
+                        1 => {
+                            let last_id = *selected.last().unwrap_or(&(path.id()));
+                            let mut last_pos = collection.paths().iter().position(|p| p.id() == last_id).unwrap();
+                            let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
+                            if last_pos < this_pos { (last_pos, this_pos) = (this_pos, last_pos) }
+                            for p in &collection.paths()[this_pos..last_pos] {
+                                if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);} // TODO: for some reason shift select only works upwards
+                                else { selected.push(p.id()) }
+                            }
+                        },
+                        2 => {
+                            if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
+                            else { selected.push(path.id()) }
+                        },
+                        _ => {
+                            selected.clear();
+                            selected.push(path.id());
+                        }
+                    }
+                }
+                UIEvent::Teleport{ stage } => {
+                    match stage {
+                        0 => {
+                            if pathlog.triggers[0].is_some() {
+                                gamedata::set_player_state([14, 1]);
+                                loop_events.push_back(UIEvent::Teleport { stage: 1 });
+                            }
+                        }
+                        1 => {
+                            // println!("{:?}", gamedata::get_noclip_state());
+                            if let Some(start_trigger) = pathlog.triggers[0] {
+                                let mut trigger_pos = start_trigger.position();
+                                trigger_pos[1] -= 1.;
+                                gamedata::set_player_position(trigger_pos);
+                                gamedata::set_player_rotation(start_trigger.rotation());
+                            }
+                            loop_events.push_back(UIEvent::Teleport { stage: 2 });
+                        }
+                        2 => {
+                            gamedata::set_player_state([0, 0]);
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
 
@@ -260,10 +314,6 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
     }
 
     for e in events {
-        // if config.toggle_window_keybind.compare_to_event(e) {
-        //     config.show_ui ^= true;
-        // }
-
         if config.start_keybind.compare_to_event(e) {
             if config.direct_mode {
                 egui.events.push_back(UIEvent::StartRecording);
@@ -296,6 +346,10 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
 
         if config.clear_keybind.compare_to_event(e) {
             egui.events.push_back(UIEvent::ClearTriggers);
+        }
+
+        if config.teleport_keybind.compare_to_event(e) {
+            egui.events.push_back(UIEvent::Teleport{ stage: 0 });
         }
     }
 }
@@ -461,27 +515,27 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
         });
 
         egui::CollapsingHeader::new("").id_source(collection.id().to_string() + "collapsing")
-        .show(ui, |ui| {
-            egui::Grid::new(collection.id().to_string() + "paths")
-                .num_columns(2)
-                .spacing([40.0, 4.0])
-                .striped(false)
-                // .with_row_color(|i, _style| {
-                //     if i < collection.paths().len() && collection.paths()[i].id() == pathlog.latest_path {
-                //         Some(egui::Color32::from_gray(54))
-                //     }
-                //     else { None }
-                // })
-                .show(ui, |ui| {
-                    if ui.interact_bg(egui::Sense::click()).clicked() {
-                        state.selected_paths.get_mut(&collection.id()).unwrap().clear();
-                        state.renaming_collection = None;
-                    }
-            
-                    for path in collection.paths() {
-                        draw_path(ui, state, config, pathlog, path, &collection);
-                    }
-                });
+            .show(ui, |ui| {
+                egui::Grid::new(collection.id().to_string() + "paths")
+                    .num_columns(2)
+                    .spacing([40.0, 4.0])
+                    .striped(false)
+                    // .with_row_color(|i, _style| {
+                    //     if i < collection.paths().len() && collection.paths()[i].id() == pathlog.latest_path {
+                    //         Some(egui::Color32::from_gray(54))
+                    //     }
+                    //     else { None }
+                    // })
+                    .show(ui, |ui| {
+                        if ui.interact_bg(egui::Sense::click()).clicked() {
+                            state.selected_paths.get_mut(&collection.id()).unwrap().clear();
+                            state.renaming_collection = None;
+                        }
+                
+                        for path in collection.paths() {
+                            draw_path(ui, state, config, pathlog, path, &collection);
+                        }
+                    });
             });
 
         ui.separator();
@@ -578,26 +632,7 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
         let time = path.time();
         let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
         if time_response.clicked() {
-            match mods {
-                1 => {
-                    let last_id = *selected.last().unwrap_or(&(path.id()));
-                    let mut last_pos = collection.paths().iter().position(|p| p.id() == last_id).unwrap();
-                    let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
-                    if last_pos < this_pos { (last_pos, this_pos) = (this_pos, last_pos) }
-                    for p in &collection.paths()[this_pos..last_pos] {
-                        if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);} // TODO: for some reason shift select only works upwards
-                        else { selected.push(p.id()) }
-                    }
-                },
-                2 => {
-                    if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
-                    else { selected.push(path.id()) }
-                },
-                _ => {
-                    selected.clear();
-                    selected.push(path.id());
-                }
-            }
+            state.events.push_back(UIEvent::SelectPath { path_id: path.id(), collection_id: collection.id(), modifier: mods });
         }
         if time_response.secondary_clicked() {
             state.events.push_back(UIEvent::SetPathFilter { collection_id: collection.id(), path_id: path.id() });
@@ -685,12 +720,6 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            // ui.label("Toggle window");
-            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            //     ui.add(Keybind::new(&mut config.toggle_window_keybind, "toggle_window_keybind"));
-            // });
-            // ui.end_row();
-
             if config.direct_mode {
                 ui.label("Start Recording");
             }
@@ -722,6 +751,12 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             ui.label("Delete Triggers");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.clear_keybind, "clear_keybind"));
+            });
+            ui.end_row();
+
+            ui.label("Teleport to Start");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(Keybind::new(&mut config.teleport_keybind, "teleport_keybind"));
             });
             ui.end_row();
         });
@@ -857,16 +892,16 @@ fn draw_credits_tab(ui: &mut egui::Ui, state: &mut UIState) {
             });
             ui.end_row();
 
-            ui.label("Aloyark");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing"); });
+            ui.hyperlink_to("Aloyark", "https://www.twitch.tv/aloyarkk");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
             ui.end_row();
 
-            ui.label("Icarus");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing"); });
+            ui.hyperlink_to("Icarus", "https://www.twitch.tv/icarus_042");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
             ui.end_row();
 
-            ui.label("Percy");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing"); });
+            ui.hyperlink_to("Percy", "https://www.twitch.tv/percyz01");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
             ui.end_row();
         });
 }
