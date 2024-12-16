@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use egui::epaint::Shadow;
-use egui::Vec2;
+use egui::{Color32, Vec2};
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::{self, HighPassFilter, Path, PathCollection, PathLog};
-use crate::gamedata;
+use crate::{gamedata, GLOBAL_STATE};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
@@ -201,11 +201,21 @@ impl UIState {
                     }
                 }
                 UIEvent::SetPathFilter { collection_id, path_id } => {
-                    if let Some(filter) = pathlog.filters.get_mut(&collection_id) {
-                        *filter = HighPassFilter::PATH { id: path_id };
-                    }
-                    else {
-                        pathlog.filters.insert(collection_id, HighPassFilter::PATH{ id: path_id });
+                    match pathlog.filters.get_mut(&collection_id) {
+                        Some(HighPassFilter::PATH{ id }) => {
+                            if *id == path_id {
+                                pathlog.filters.remove(&collection_id);
+                            }
+                            else {
+                                *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
+                            }
+                        },
+                        Some(HighPassFilter::GOLD) => {
+                            *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
+                        }
+                        _ => {
+                            pathlog.filters.insert(collection_id, HighPassFilter::PATH{ id: path_id });
+                        }
                     }
                 }
                 UIEvent::SaveComparison => {
@@ -253,7 +263,7 @@ impl UIState {
                             let last_id = *selected.last().unwrap_or(&(path.id()));
                             let mut last_pos = collection.paths().iter().position(|p| p.id() == last_id).unwrap();
                             let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
-                            if last_pos < this_pos { (last_pos, this_pos) = (this_pos, last_pos) }
+                            if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
                             for p in &collection.paths()[this_pos..last_pos] {
                                 if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);} // TODO: for some reason shift select only works upwards
                                 else { selected.push(p.id()) }
@@ -356,7 +366,7 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
 
 
 pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, pathlog: &mut PathLog) {
-    ui.style_mut().visuals.selection.bg_fill = config.accent_colors[0];
+    ui.visuals_mut().selection.bg_fill = config.accent_colors[0];
 
     ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
     // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
@@ -403,14 +413,14 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
             // if ui.interact_bg(egui::Sense::click()).clicked() {
             //     state.renaming_collection = None;
             // }
-            let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
-            let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
+            let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+            let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                 let mut arm_button_text = egui::RichText::new("\u{2B55}");
                 if pathlog.active_collection == Some(collection.id()) {
-                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
-                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[1];
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[1];
                     arm_button_text = arm_button_text.strong();
                 }
 
@@ -422,8 +432,8 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     state.events.push_back(UIEvent::ToggleActive { id: collection.id() });
                 }
 
-                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 if state.renaming_collection == Some(collection.id()) {
                     let response = ui.add(egui::TextEdit::singleline(&mut state.renaming_name).desired_width(200.0));
@@ -446,14 +456,11 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     }
                 }
 
-                // let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
-                // let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
-
                 let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
                 if *state.solo_collections.get(&collection.id()).unwrap() {
-                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
                     solo_button_text = solo_button_text.strong();
                 }
 
@@ -461,13 +468,13 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     *state.solo_collections.get_mut(&collection.id()).unwrap() ^= true;
                 }
 
-                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
                 if *state.mute_collections.get(&collection.id()).unwrap() {
-                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
                     mute_button_text = mute_button_text.strong();
                 }
 
@@ -475,13 +482,13 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     *state.mute_collections.get_mut(&collection.id()).unwrap() ^= true;
                 }
 
-                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
                 
                 let mut mute_button_text = egui::RichText::new("\u{2B06}");
                 if let Some(HighPassFilter::GOLD) = pathlog.filters.get(&collection.id()) {
-                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
                     mute_button_text = mute_button_text.strong();
                 }
 
@@ -489,27 +496,8 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     state.events.push_back(UIEvent::ToggleGoldFilter { collection_id: collection.id() });
                 }
 
-                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-                
-                // let mut arm_button_text = egui::RichText::new("\u{2B55}");
-                // // if pathlog.active_collections.contains(&collection.id()) {
-                // if pathlog.active_collection == Some(collection.id()) {
-                //     ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[1].gamma_multiply(1.2);
-                //     ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[1];
-                //     arm_button_text = arm_button_text.strong();
-                // }
-
-                // if ui.add(
-                //     egui::Button::new(arm_button_text)
-                //         .min_size(egui::vec2(19.0, 19.0))
-                //         .rounding(egui::Rounding::same(10.0))
-                //     ).clicked() {
-                //     state.events.push_back(UIEvent::ToggleActive { id: collection.id() });
-                // }
-
-                // ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                // ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
             });
             ui.end_row();
         });
@@ -520,11 +508,21 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     .num_columns(2)
                     .spacing([40.0, 4.0])
                     .striped(false)
-                    // .with_row_color(|i, _style| {
-                    //     if i < collection.paths().len() && collection.paths()[i].id() == pathlog.latest_path {
-                    //         Some(egui::Color32::from_gray(54))
+                    // .with_row_color(|i, style| {
+                    //     // this is not pretty but I'm just glad it works for now
+                    //     // nah actually fuck this rn
+                    //     unsafe {
+                    //         let p_log = &GLOBAL_STATE.as_mut().unwrap().pathlog;
+                    //         if let Some(c_id) = p_log.active_collection {
+                    //             let coll = &p_log.path_collections[p_log.path_collections.iter().position(|c| c.id() == c_id).unwrap()];
+                    //             if i < coll.paths().len() && coll.paths()[i].id() == p_log.latest_path {
+                    //                 Some(egui::Color32::from_gray(42))
+                    //                 // Some(style.visuals.faint_bg_color)
+                    //             }
+                    //             else { None }
+                    //         }
+                    //         else { None }
                     //     }
-                    //     else { None }
                     // })
                     .show(ui, |ui| {
                         if ui.interact_bg(egui::Sense::click()).clicked() {
@@ -585,21 +583,20 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, 
     });
 }
 
-// TODO: select paths through events
 fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog, path: &Path, collection: &PathCollection) {
     if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
     if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
 
-        let original_hovered_weak_bg_fill = ui.style_mut().visuals.widgets.hovered.weak_bg_fill;
-        let original_inactive_weak_bg_fill = ui.style_mut().visuals.widgets.inactive.weak_bg_fill;
+        let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+        let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
         let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
         if *state.mute_paths.get(&path.id()).unwrap() {
-            ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
             mute_button_text = mute_button_text.strong();
         }
 
@@ -607,14 +604,14 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
             *state.mute_paths.get_mut(&path.id()).unwrap() ^= true;
         }
 
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
         let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
         if *state.solo_paths.get(&path.id()).unwrap() {
-            ui.style_mut().visuals.widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = config.accent_colors[0];
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
             solo_button_text = solo_button_text.strong();
         }
 
@@ -622,15 +619,31 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
             *state.solo_paths.get_mut(&path.id()).unwrap() ^= true;
         }
 
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = ui.visuals_mut().window_fill;
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = ui.visuals_mut().window_fill;
+
+        // TODO: why tf do these not disable the dark line around the buttons??
+        // let original_bg_stroke_color = ui.visuals_mut().widgets.inactive.bg_stroke.color;
+        // ui.visuals_mut().widgets.inactive.bg_stroke.color = ui.visuals_mut().window_fill;
+        // let original_bg_stroke = ui.visuals_mut().widgets.inactive.bg_stroke;
+        // ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
 
         let mods = state.modifier;
         let selected = state.selected_paths.get_mut(&collection.id()).unwrap();
-        if selected.contains(&path.id()) { ui.style_mut().visuals.override_text_color = Some(config.select_color.as_color32()); }
+        if selected.contains(&path.id()) {
+            ui.visuals_mut().override_text_color = Some(config.select_color.as_color32());
+        }
+        if pathlog.latest_path == path.id() {
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::from_gray(42);
+        }
 
         let time = path.time();
-        let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
+        // let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
+
+        let mut time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000)));
+
+        let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0)));
+
         if time_response.clicked() {
             state.events.push_back(UIEvent::SelectPath { path_id: path.id(), collection_id: collection.id(), modifier: mods });
         }
@@ -638,7 +651,12 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
             state.events.push_back(UIEvent::SetPathFilter { collection_id: collection.id(), path_id: path.id() });
         }
 
-        ui.style_mut().visuals.override_text_color = None;
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+        // ui.visuals_mut().widgets.inactive.bg_stroke.color = original_bg_stroke_color;
+        // ui.visuals_mut().widgets.inactive.bg_stroke = original_bg_stroke;
+
+        ui.visuals_mut().override_text_color = None;
 
         // TODO: maybe implement PartialEq for HighPassFilter
         if let Some(filter) = pathlog.filters.get(&collection.id()) {

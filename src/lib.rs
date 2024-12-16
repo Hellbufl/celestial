@@ -152,6 +152,10 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                     color = config.gold_color;
                     thick = 0.04;
                 }
+                else if visible_paths.len() == 2 {
+                    color = config.slow_color;
+                    thick = 0.02;
+                }
                 else {
                     let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
 
@@ -446,13 +450,11 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 
 // TODO LIST
 
-// - fix latest time highlight
 // - move paths between collections
 // - move collections
-
-// - fix shift selection
 // - save timer position
 // - popup messages
+
 // - fix all the bugs :)
 
 // - should you be able to duplicate paths? For now: no
