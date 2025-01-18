@@ -10,7 +10,7 @@ use egui_keybind::Keybind;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::{self, HighPassFilter, Path, PathCollection, PathLog};
-use crate::{gamedata, GLOBAL_STATE};
+use crate::{gamedata, DebugState, DEBUG_STATE, GLOBAL_STATE};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
@@ -21,6 +21,12 @@ enum RX {
 
 #[derive(PartialEq)]
 pub enum Tab { Comparison, Paths, Config, Credits }
+
+struct Teleport {
+    location: [f32; 3],
+    rotation: [f32; 3],
+    camera_rotation: [f32; 2],
+}
 
 pub enum UIEvent {
     RemovePath {
@@ -68,9 +74,8 @@ pub enum UIEvent {
         collection_id: Uuid,
         modifier: u8,
     },
-    Teleport {
-        stage: u8,
-    },
+    Teleport,
+    SpawnTeleport,
 }
 
 pub struct UIState {
@@ -86,6 +91,7 @@ pub struct UIState {
     pub solo_paths: HashMap<Uuid, bool>,
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
+    teleport: Option<Teleport>,
 }
 
 impl UIState {
@@ -103,6 +109,7 @@ impl UIState {
             solo_paths: HashMap::new(),
             mute_collections: HashMap::new(),
             solo_collections: HashMap::new(),
+            teleport: None,
         };
 
         state
@@ -125,11 +132,11 @@ impl UIState {
                     pathlog.set_autosave(new);
                 }
                 UIEvent::SpawnTrigger { index, position, rotation, size } => {
-                    let mut ok = true;
+                    let mut empty = true;
                     for collection in &pathlog.path_collections {
-                        ok = collection.paths().is_empty();
+                        empty &= collection.paths().is_empty();
                     }
-                    if ok {
+                    if !empty {
                         pathlog.create_trigger(index, position, rotation, size);
                     }
                     else {
@@ -279,29 +286,18 @@ impl UIState {
                         }
                     }
                 }
-                UIEvent::Teleport{ stage } => {
-                    match stage {
-                        0 => {
-                            if pathlog.triggers[0].is_some() {
-                                gamedata::set_player_state([14, 1]);
-                                loop_events.push_back(UIEvent::Teleport { stage: 1 });
-                            }
-                        }
-                        1 => {
-                            // println!("{:?}", gamedata::get_noclip_state());
-                            if let Some(start_trigger) = pathlog.triggers[0] {
-                                let mut trigger_pos = start_trigger.position();
-                                trigger_pos[1] -= 1.;
-                                gamedata::set_player_position(trigger_pos);
-                                gamedata::set_player_rotation(start_trigger.rotation());
-                            }
-                            loop_events.push_back(UIEvent::Teleport { stage: 2 });
-                        }
-                        2 => {
-                            gamedata::set_player_state([0, 0]);
-                        }
-                        _ => {}
+                UIEvent::Teleport => {
+                    if let Some(teleport) = &self.teleport {
+                        gamedata::teleport_player(teleport.location, teleport.rotation);
+                        gamedata::set_camera_rotation(teleport.camera_rotation);
                     }
+                }
+                UIEvent::SpawnTeleport => {
+                    self.teleport = Some(Teleport {
+                        location: gamedata::get_player_position(),
+                        rotation: gamedata::get_player_rotation(),
+                        camera_rotation: gamedata::get_camera_rotation(),
+                    })
                 }
             }
         }
@@ -334,6 +330,7 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
                     rotation: gamedata::get_player_rotation(),
                     size: config.trigger_size[0],
                 });
+                egui.events.push_back(UIEvent::SpawnTeleport);
             }
         }
 
@@ -359,7 +356,12 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
         }
 
         if config.teleport_keybind.compare_to_event(e) {
-            egui.events.push_back(UIEvent::Teleport{ stage: 0 });
+            egui.events.push_back(UIEvent::Teleport);
+            unsafe { DEBUG_STATE.as_mut().unwrap().calc_avg = true; }
+        }
+
+        if config.spawn_teleport_keybind.compare_to_event(e) {
+            egui.events.push_back(UIEvent::SpawnTeleport);
         }
     }
 }
@@ -776,6 +778,12 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.teleport_keybind, "teleport_keybind"));
             });
+
+            ui.label("Set Teleport Location");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(Keybind::new(&mut config.spawn_teleport_keybind, "spawn_teleport_keybind"));
+            });
+
             ui.end_row();
         });
 

@@ -57,6 +57,22 @@ pub fn get_view_matrix() -> [[f32; 4]; 4] {
     return view_proj;
 }
 
+pub fn get_camera_rotation() -> [f32; 2] {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let cam_rot: [f32; 2] = unsafe { std::ptr::read((process_start + 0x1020C60) as *const _) };
+
+    return cam_rot;
+}
+
+pub fn set_camera_rotation(new_rot: [f32; 2]) {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    unsafe{ 
+        std::ptr::write((process_start + 0x1020C60) as *mut _, new_rot);
+    };
+}
+
 pub fn get_player_state() -> [u32; 2] {
     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
 
@@ -123,4 +139,17 @@ pub fn get_noclip_state() -> u32 {
     let noclip_state: u32 = unsafe { std::ptr::read((player_addr + 0x14E0) as *const _) };
 
     return noclip_state;
+}
+
+pub fn teleport_player(location: [f32; 3], rotation: [f32; 3]) {
+    let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
+
+    let player_addr: usize = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
+    if player_addr == 0 {
+        return;
+    }
+
+    let teleport_function = unsafe {std::mem::transmute::<_, extern "C" fn(usize, [f32; 3], [f32; 3], i32, f32)>(process_start + 0x4f0EA0) };
+    
+    teleport_function(player_addr, location, rotation, 1, 0.);
 }

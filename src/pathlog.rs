@@ -8,6 +8,7 @@ use glam::{Vec3, Mat3};
 use serde_binary::binary_stream;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
+use windows::Win32::Foundation::E_MBN_SMS_OPERATION_NOT_ALLOWED;
 
 pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
 // pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
@@ -381,15 +382,18 @@ impl PathLog {
             self.direct_paths.add(self.recording_path.clone(), None);
         }
         else {
+            let mut empty = true;
+
             for i in 0..self.path_collections.len() {
-                // if self.active_collections.contains(&self.path_collections[i].id()) {
+                empty &= self.path_collections[i].paths().is_empty();
+
                 let id = self.path_collections[i].id();
                 if self.active_collection == Some(id) {
                     self.path_collections[i].add(self.recording_path.clone(), self.filters.get(&id));
                 }
             }
 
-            if self.autosave {
+            if self.autosave && !empty {
                 if let Some(file_path) = &self.current_file {
                     self.save_comparison(file_path.clone());
                 }

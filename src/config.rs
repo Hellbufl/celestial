@@ -15,7 +15,9 @@ pub struct ConfigState {
 	pub stop_keybind: Shortcut,
 	pub reset_keybind: Shortcut,
 	pub clear_keybind: Shortcut,
+
 	pub teleport_keybind: Shortcut,
+	pub spawn_teleport_keybind: Shortcut,
 
 	pub trigger_size: [[f32; 3]; 2],
     pub timer_size: f32,
@@ -41,7 +43,9 @@ impl ConfigState {
             stop_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Period}), None),
             reset_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Minus}), None),
             clear_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Delete}), None),
+
             teleport_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Home}), None),
+            spawn_teleport_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
 
             trigger_size: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
             timer_size: 24.,
@@ -73,7 +77,9 @@ impl ConfigState {
         self.stop_keybind = Shortcut::from_string(section.get("stop_keybind").unwrap_or(self.stop_keybind.to_string().as_str()));
         self.reset_keybind = Shortcut::from_string(section.get("reset_keybind").unwrap_or(self.reset_keybind.to_string().as_str()));
         self.clear_keybind = Shortcut::from_string(section.get("clear_keybind").unwrap_or(self.clear_keybind.to_string().as_str()));
+
         self.teleport_keybind = Shortcut::from_string(section.get("teleport_keybind").unwrap_or(self.teleport_keybind.to_string().as_str()));
+        self.spawn_teleport_keybind = Shortcut::from_string(section.get("spawn_teleport_keybind").unwrap_or(self.spawn_teleport_keybind.to_string().as_str()));
 
         self.trigger_size[0] = serde_json::from_str(section.get("start_trigger_size").unwrap()).unwrap();
         self.trigger_size[1] = serde_json::from_str(section.get("end_trigger_size").unwrap()).unwrap();
@@ -103,7 +109,9 @@ impl ConfigState {
             .set("stop_keybind", self.stop_keybind.to_string())
             .set("reset_keybind", self.reset_keybind.to_string())
             .set("clear_keybind", self.clear_keybind.to_string())
+
             .set("teleport_keybind", self.teleport_keybind.to_string())
+            .set("spawn_teleport_keybind", self.spawn_teleport_keybind.to_string())
 
             .set("start_trigger_size", format!("{:?}", self.trigger_size[0]))
             .set("end_trigger_size", format!("{:?}", self.trigger_size[1]))

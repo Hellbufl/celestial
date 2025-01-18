@@ -1,6 +1,8 @@
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
+use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
 use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
@@ -58,9 +60,16 @@ impl GlobalState {
     }
 }
 
-struct DebugState {
+pub struct DebugState {
     frame_time: u64,
     copy_time: u64,
+
+    frame_count: usize,
+    calc_avg: bool,
+    last_frame: Instant,
+    last_player_pos: Vec3,
+    player_speeds: Vec<f32>,
+    average_player_speed: f32,
 }
 
 unsafe fn init_globals(this: &IDXGISwapChain) {
@@ -86,6 +95,24 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
     unsafe {
         init_globals(&this);
+
+        let debug = DEBUG_STATE.as_mut().unwrap();
+
+        let elapsed = debug.last_frame.elapsed().as_secs_f32();
+
+        let speed = (Vec3::from_array(gamedata::get_player_position()) - debug.last_player_pos).length() / elapsed;
+        debug.player_speeds[debug.frame_count % 60] = speed;
+        // debug.player_speeds.push(speed);
+        // if debug.calc_avg {
+        if debug.frame_count % 10 == 0 {
+            debug.average_player_speed = debug.player_speeds.iter().sum::<f32>() / debug.player_speeds.len() as f32;
+            // debug.player_speeds.clear();
+            // debug.calc_avg = false;
+        }
+
+        debug.last_player_pos = gamedata::get_player_position().into();
+        debug.last_frame = Instant::now();
+        debug.frame_count += 1;
     
         if let Some(pintar) = PINTAR.as_mut() {
             DEBUG_STATE.as_mut().unwrap().copy_time = 0;
@@ -308,20 +335,8 @@ fn draw_debug(ui: &mut egui::Ui) {
     unsafe {
         let debug = DEBUG_STATE.as_ref().unwrap();
 
-        // ui.add(egui::Label::new(
-        //     RichText::new(format!("{:?} / {:?}", debug.copy_time, debug.frame_time))
-        // ).selectable(false));
-
         ui.add(egui::Label::new(
-            RichText::new(format!("{:x?}", gamedata::get_player_actor()))
-        ).selectable(false));
-
-        ui.add(egui::Label::new(
-            RichText::new(format!("{:x?}", gamedata::get_player_handle()))
-        ).selectable(false));
-
-        ui.add(egui::Label::new(
-            RichText::new(format!("{:?}", gamedata::get_player_position()))
+            RichText::new(format!("{:.2?}", debug.average_player_speed))
         ).selectable(false));
     }
 }
@@ -420,7 +435,20 @@ fn main() {
 
     unsafe {
         GLOBAL_STATE = Some(GlobalState::new());
-        DEBUG_STATE = Some(DebugState{ frame_time: 0, copy_time: 0 });
+        let mut debug = DebugState{
+            frame_time: 0,
+            copy_time: 0,
+            frame_count: 0,
+            calc_avg: false,
+            last_frame: Instant::now(),
+            last_player_pos: Vec3::ZERO,
+            player_speeds: Vec::with_capacity(60),
+            average_player_speed: 0.,
+        };
+        // DEBUG_STATE.as_mut().unwrap().player_speeds.resize(60, 0.);
+        debug.player_speeds.resize(60, 0.);
+
+        DEBUG_STATE = Some(debug);
     }
 
     ocular::hook_present(hk_present);
