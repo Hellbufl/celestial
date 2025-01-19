@@ -22,6 +22,7 @@ I'm also happy to receive pull requests :)
 
 # Installation
 1. Download the [latest release](https://github.com/Hellbufl/celestial/releases)
+    > Google Chrome blocks the download, use Firefox instead
 2. Put it in your game folder next to NieRAutomata.exe
 3. Rename "celestial.dll" to one of the [Supported Files](#supported-files)
 
@@ -48,6 +49,10 @@ After multiple recordings with the same set of triggers, the different paths wil
 There are two types of filters marked by the little up-arrow.
 If you activate the filter mode on a collection, that collection will only accept a new path if it is faster than all paths in that collection.
 You can also set the filter on a specific time by right clicking on it. Now only paths faster than this time will be accepted and the filter will stay fixed.
+
+# Troubleshooting
+Windows Defender might prevent the game from running whith the mod installed. I currently don't know what to do about this so you'll have to make an exception for the NieR:Autonata folder for the time being.
+Google Chrome will not even download the dll.
 
 <!--
 ### Separate Paths
