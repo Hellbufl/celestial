@@ -2,15 +2,14 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use egui::epaint::Shadow;
-use egui::{Color32, Vec2};
+use egui::Color32;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
-use crate::pathlog::{self, HighPassFilter, Path, PathCollection, PathLog};
-use crate::{gamedata, DebugState, DEBUG_STATE, GLOBAL_STATE};
+use crate::pathlog::{HighPassFilter, Path, PathCollection, PathLog};
+use crate::{gamedata, DEBUG_STATE};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
@@ -136,7 +135,7 @@ impl UIState {
                     for collection in &pathlog.path_collections {
                         empty &= collection.paths().is_empty();
                     }
-                    if !empty {
+                    if empty {
                         pathlog.create_trigger(index, position, rotation, size);
                     }
                     else {
@@ -778,12 +777,12 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.teleport_keybind, "teleport_keybind"));
             });
+            ui.end_row();
 
             ui.label("Set Teleport Location");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut config.spawn_teleport_keybind, "spawn_teleport_keybind"));
             });
-
             ui.end_row();
         });
 
