@@ -11,18 +11,19 @@ crate-type = ["cdylib"]
 [dependencies]
 bincode = "1.3.3"
 glam = { version = "0.29.0", features = ["serde"] }
-ocular = { path = "../ocular-rs" }
-pintar = { path = "./pintar" }
+ocular = { git = "https://github.com/WoefulWolf/ocular-rs.git" }
+pintar = { git = "https://github.com/Hellbufl/pintar.git" }
 egui = "0.27"
-egui-directx11 = { path = "../egui-directx/egui-directx11" }
-egui-win32 = { path = "../egui-directx/egui-win32" }
+egui-directx11 = { git = "https://github.com/Hellbufl/egui-directx.git" }
+egui-win32 = { git = "https://github.com/Hellbufl/egui-directx.git" }
 rust-ini = "0.21.1"
 serde = { version = "1.0.208", features = ["derive"] }
 serde-binary = "0.5.0"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-egui-keybind = { path = "../egui-keybind", features = ["serde"] }
+# egui-keybind = { path = "../egui-keybind-f", features = ["serde"] }
+egui-keybind = { git = "https://github.com/Hellbufl/egui-keybind.git", features = ["serde"] }
 uuid = { version = "1.10.0", features = ["serde", "v4"] }
 native-dialog = "0.7.0"
 lazy_static = "1.5.0"
