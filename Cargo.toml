@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 bincode = "1.3.3"
 glam = { version = "0.29.0", features = ["serde"] }
 ocular = { path = "../ocular-rs" }
-pintar = { path = "../pintar" }
+pintar = { path = "./pintar" }
 egui = "0.27"
 egui-directx11 = { path = "../egui-directx/egui-directx11" }
 egui-win32 = { path = "../egui-directx/egui-win32" }
