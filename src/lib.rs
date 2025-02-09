@@ -474,15 +474,4 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 // changing page protection flags for code injection
 // maybe ill need this for something
 // let mut old = windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(0);
-// let wo =windows::Win32::System::Memory::VirtualProtect(addr as *const , 8, windows::Win32::System::Memory::PAGEPROTECTION_FLAGS(0x4), &mut old as *mut );
-
-// TODO LIST
-
-// - move paths between collections
-// - move collections
-// - save timer position
-// - popup messages
-
-// - fix all the bugs :)
-
-// - should you be able to duplicate paths? For now: no
+// let wo = windows::Win32::System::Memory::VirtualProtect(addr as *const , 8, windows::Win32::System::Memory::PAGEPROTECTION_FLAGS(0x4), &mut old as *mut );
