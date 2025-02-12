@@ -73,6 +73,10 @@ pub enum UIEvent {
         collection_id: Uuid,
         modifier: u8,
     },
+    MovePath{
+        path_id: Uuid,
+        from_collection: PathCollection,
+    },
     Teleport,
     SpawnTeleport,
 }
@@ -91,6 +95,7 @@ pub struct UIState {
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
     teleport: Option<Teleport>,
+    move_mode: bool,
 }
 
 impl UIState {
@@ -109,6 +114,7 @@ impl UIState {
             mute_collections: HashMap::new(),
             solo_collections: HashMap::new(),
             teleport: None,
+            move_mode: false,
         };
 
         state
@@ -123,6 +129,11 @@ impl UIState {
                     self.mute_paths.remove(&path_id);
                     self.solo_paths.remove(&path_id);
                     pathlog.remove(path_id, collection_id);
+                }
+                UIEvent::MovePath { path_id, from_collection} => {
+                    let path_to_move = &path_id;
+                    println!("moving from collection: {:?}", from_collection.name);
+                    pathlog.move_path(path_to_move);
                 }
                 UIEvent::ChangeDirectMode { new } => {
                     pathlog.set_direct_mode(new);
@@ -450,6 +461,13 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                 }
             });
 
+            // let get_collection_name: &str = "get paths";
+            // if ui.add(egui::Button::new(get_collection_name).min_size(egui::vec2(19.0, 19.0))).clicked() {
+            //   let mut name = pathlog.active_collection;
+            //   println!("collection name is: {:?}", name);
+              
+            // }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if state.delete_mode {
                     if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
@@ -502,6 +520,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
             });
             ui.end_row();
         });
+
 
         egui::CollapsingHeader::new("").id_source(collection.id().to_string() + "collapsing")
             .show(ui, |ui| {
@@ -559,6 +578,10 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                 }
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     state.events.push_back(UIEvent::CreateCollection);
+                }
+
+                if ui.add(egui::Button::new("\u{2192}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.move_mode ^= true;
                 }
             });
             ui.end_row();
@@ -676,6 +699,15 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
                 state.events.push_back(UIEvent::RemovePath { path_id: path.id(), collection_id: collection.id() });
             }
         }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+            if state.move_mode {
+                if ui.add(egui::Button::new("Move path").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.selected_paths.get_mut(&path.id);
+                    state.events.push_back(UIEvent::MovePath { path_id: path.id(), from_collection: collection.clone() });
+                }
+            }
+        })
     });
 
     ui.end_row();
