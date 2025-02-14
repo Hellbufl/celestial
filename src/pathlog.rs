@@ -19,7 +19,7 @@ pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
 pub struct Path {
 	pub id: Uuid,
 	pub time: u64,
-    nodes: Vec<[f32; 3]>,
+    pub nodes: Vec<[f32; 3]>,
 }
 
 impl Path {
@@ -137,9 +137,9 @@ pub enum HighPassFilter {
 #[derive(Serialize, Deserialize)]
 #[derive(Debug)]
 pub struct PathCollection {
-    id: Uuid,
+    pub id: Uuid,
     pub name: String,
-    paths: Vec<Path>,
+    pub paths: Vec<Path>,
 }
 
 impl PathCollection {
@@ -289,7 +289,6 @@ pub struct PathLog {
     pub active_collection: Option<Uuid>,
     pub triggers: [Option<BoxCollider>; 2],
     pub filters: HashMap<Uuid, HighPassFilter>,
-    pub path_to_move: HashMap<Uuid, bool>,
 }
 
 impl PathLog {
@@ -312,7 +311,6 @@ impl PathLog {
             active_collection: None,
             triggers: [None, None],
             filters: HashMap::new(),
-            path_to_move: HashMap::new(),
         };
 
         if !std::fs::exists("Paths").expect("wtf bro where is your dll") && std::fs::create_dir("Paths").is_err() {
@@ -323,10 +321,6 @@ impl PathLog {
         info!("Initialized");
 
         pathlog
-    }
-
-    pub fn move_path(&mut self, path_to_move: &Uuid) {
-
     }
 
 	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3]) {

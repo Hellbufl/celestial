@@ -6,12 +6,18 @@ use egui::Color32;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
+use std::cell::RefCell;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::{HighPassFilter, Path, PathCollection, PathLog};
 use crate::{gamedata, DEBUG_STATE};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
+
+thread_local! {
+    static PATH_TO_MOVE: RefCell<Option<Uuid>> = RefCell::new(None);
+}
+
 
 enum RX {
     Save { rx: mpsc::Receiver<Result<Option<PathBuf>, native_dialog::Error>> },
@@ -75,7 +81,9 @@ pub enum UIEvent {
     },
     MovePath{
         path_id: Uuid,
-        from_collection: PathCollection,
+    },
+    MoveToCollection{
+        collection_id: Uuid,
     },
     Teleport,
     SpawnTeleport,
@@ -130,11 +138,36 @@ impl UIState {
                     self.solo_paths.remove(&path_id);
                     pathlog.remove(path_id, collection_id);
                 }
-                UIEvent::MovePath { path_id, from_collection} => {
-                    let path_to_move = &path_id;
-                    println!("moving from collection: {:?}", from_collection.name);
-                    pathlog.move_path(path_to_move);
+                UIEvent::MovePath { path_id} => {
+                    PATH_TO_MOVE.with(|global_path_id| {
+                        *global_path_id.borrow_mut() = Some(path_id);
+                    });
                 }
+
+                UIEvent::MoveToCollection { collection_id } => {
+                    if let Some(path_id) = PATH_TO_MOVE.with(|global_path_id| global_path_id.borrow_mut().take()) { //basic implementation of moving paths between collections
+                                                                                                                                                  //now need to return Path and PathCollection fields to private  
+                        let path = pathlog.path_collections                                                     // make proper use of existing methods or make new methods for deleting paths
+                            .iter_mut()                                                                               // and inserting the path into the collection
+                            .find_map(|collection| {                                                                        // also want to remove buttons from ui and make use of selected path's functionality
+                                collection.paths.iter().position(|p| p.id == path_id).map(|idx| collection.paths.remove(idx))// and have all functionality in keybind shortcuts like ctrl+x and ctrl+v
+                            });
+                
+                        if let Some(path) = path {
+                            if let Some(collection) = pathlog.path_collections.iter_mut().find(|c| c.id == collection_id) {
+                                collection.paths.push(path);
+                                println!("Moved Path {:?} to Collection {:?}", path_id, collection_id);
+                            } else {
+                                println!("Collection {:?} not found!", collection_id);
+                            }
+                        } else {
+                            println!("Path {:?} not found in any collection!", path_id);
+                        }
+                    } else {
+                        println!("No path selected to move.");
+                    }
+                }
+                
                 UIEvent::ChangeDirectMode { new } => {
                     pathlog.set_direct_mode(new);
                 }
@@ -444,6 +477,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                     state.events.push_back(UIEvent::ToggleActive { id: collection.id() });
                 }
 
+
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
@@ -458,6 +492,13 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                 else if ui.label(collection.name.clone()).clicked() {
                     state.renaming_collection = Some(collection.id());
                     state.renaming_name = collection.name.clone();
+                }
+
+                if state.move_mode {
+                    if ui.add(egui::Button::new("move to collection").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                        state.events.push_back(UIEvent::MoveToCollection { collection_id: collection.id() });
+                }
+
                 }
             });
 
@@ -704,7 +745,7 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
             if state.move_mode {
                 if ui.add(egui::Button::new("Move path").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     state.selected_paths.get_mut(&path.id);
-                    state.events.push_back(UIEvent::MovePath { path_id: path.id(), from_collection: collection.clone() });
+                    state.events.push_back(UIEvent::MovePath { path_id: path.id() });
                 }
             }
         })
