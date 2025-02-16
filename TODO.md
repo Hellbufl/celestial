@@ -1,5 +1,8 @@
 ### Todo
 
+- make wolf give me the fix for inputs going through egui
+
+- rework teleport system
 - check save dialog edge cases
 - make autosave not destroy your files lmao
 - get some cool screenshots for the github
@@ -18,4 +21,9 @@
 
 ### Planned Features
 
+- culling
+- limit drawn lines per collection by only drawing first 10 and then every Nth so that 10+M/N = MAX
+- double buffered recording so the filled buffer can be saved to disk and discarded when other gets full
+- manual editing of triggers in ui
+- section triggers
 - use ingame triggers for start and end

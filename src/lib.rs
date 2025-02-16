@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
