@@ -4,12 +4,20 @@ use std::time::Instant;
 use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
-use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
+use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH, UNWIND_HISTORY_TABLE_SIZE};
 use windows::Win32::Foundation::{BOOL, HMODULE, LRESULT, WPARAM, LPARAM};
 use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::Graphics::Direct3D11::{ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11DepthStencilView};
 use windows::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrA, CallWindowProcW, WNDPROC, GWLP_WNDPROC};
+
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+use windows::Win32::Devices::HumanInterfaceDevice::{DirectInput8Create, IDirectInput8A, IDirectInputDevice8A, GUID_SysMouse, GUID_SysKeyboard};
+use windows::core::ComInterface;
+use windows::core::Interface;
+use windows::core::GUID;
+use retour::GenericDetour;
+use once_cell::sync::Lazy;
 
 use tracing::*;
 use tracing_subscriber::prelude::*;
@@ -42,6 +50,39 @@ static mut PINTAR : Option<Pintar> = None;
 static mut EGUI_RENDERER : Option<DirectX11Renderer> = None;
 static mut INPUT_MANAGER : Option<InputManager> = None;
 static mut OLD_WNDPROC : Option<WNDPROC> = None;
+
+static mut IS_POINTER_OVER_EGUI : bool = false;
+static mut EGUI_WANTS_KEYBOARD_INPUT : bool = false;
+
+type GetDeviceStatusFn = unsafe extern "system" fn(this: *mut c_void, param0: u32, param1: *mut c_void) -> HRESULT;
+
+static MOUSE_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = Lazy::new(|| {
+    unsafe {
+        let mut di8: Option<IDirectInput8A> = None;
+        let _res = DirectInput8Create(GetModuleHandleA(None).unwrap(), 0x0800, &IDirectInput8A::IID, std::mem::transmute(&mut di8), None);
+
+        let mut di8_device_mouse: Option<IDirectInputDevice8A> = None;
+        let _res = di8.clone().unwrap().CreateDevice(&GUID_SysMouse, &mut di8_device_mouse, None);
+
+        let hook = GenericDetour::<GetDeviceStatusFn>::new(std::mem::transmute(di8_device_mouse.unwrap().vtable().GetDeviceState), hk_mouse_get_device_state).expect("Failed to hook GetDeviceState for mouse.");
+
+        hook
+    }
+  });
+
+static KEYBOARD_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = Lazy::new(|| {
+    unsafe {
+        let mut di8: Option<IDirectInput8A> = None;
+        let _res = DirectInput8Create(GetModuleHandleA(None).unwrap(), 0x0800, &IDirectInput8A::IID, std::mem::transmute(&mut di8), None);
+
+        let mut di8_device_keyboard: Option<IDirectInputDevice8A> = None;
+        let _res = di8.unwrap().CreateDevice(&GUID_SysKeyboard, &mut di8_device_keyboard, None);
+
+        let hook = GenericDetour::<GetDeviceStatusFn>::new(std::mem::transmute(di8_device_keyboard.unwrap().vtable().GetDeviceState), hk_keyboard_get_device_state).expect("Failed to hook GetDeviceState for keyboard.");
+
+        hook
+    }
+  });
 
 struct GlobalState {
     pathlog: PathLog,
@@ -84,7 +125,7 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
     }
 
     if INPUT_MANAGER.is_none() {
-        OLD_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(sd.OutputWindow, GWLP_WNDPROC, new_wndproc as usize as _)));       
+        OLD_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(sd.OutputWindow, GWLP_WNDPROC, new_wndproc as usize as _)));
         INPUT_MANAGER = Some(InputManager::new(sd.OutputWindow));
     }
 }
@@ -112,7 +153,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
         debug.last_player_pos = gamedata::get_player_position().into();
         debug.last_frame = Instant::now();
         debug.frame_count += 1;
-    
+
         if let Some(pintar) = PINTAR.as_mut() {
             DEBUG_STATE.as_mut().unwrap().copy_time = 0;
 
@@ -126,20 +167,40 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
             render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
 
+            if let Some(teleport) = &state.teleports[0] {
+                let pos = teleport.location;
+                let mut color = config.trigger_color[0];
+                // color[3] = 0.5;
+                // pos[1] += 1.0;
+                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+                color[3] *= 0.25;
+                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+            }
+
+            if let Some(teleport) = &state.teleports[1] {
+                let pos = teleport.location;
+                let mut color = config.trigger_color[1];
+                // color[3] = 0.5;
+                // pos[1] += 1.0;
+                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+                color[3] *= 0.25;
+                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+            }
+
             let mut visible_collection = PathCollection::new("Visible".to_string());
             let mut selected : Vec<Uuid> = Vec::new();
-            
+
             for collection in &pathlog.path_collections {
-                if !state.solo_collections.contains_key(&collection.id()) { state.solo_collections.insert(collection.id(), false); }
-                if !state.mute_collections.contains_key(&collection.id()) { state.mute_collections.insert(collection.id(), false); }
-                if !state.selected_paths.contains_key(&collection.id()) { state.selected_paths.insert(collection.id(), Vec::new()); }
+                // if !state.solo_collections.contains_key(&collection.id()) { state.solo_collections.insert(collection.id(), false); }
+                // if !state.mute_collections.contains_key(&collection.id()) { state.mute_collections.insert(collection.id(), false); }
+                // if !state.selected_paths.contains_key(&collection.id()) { state.selected_paths.insert(collection.id(), Vec::new()); }
 
                 let mut visible = true;
                 for v in state.solo_collections.values() {
                     if *v {visible = false;}
                 }
-                if state.solo_collections.get(&collection.id()) == Some(&true) { visible = true; }
-                if state.mute_collections.get(&collection.id()) == Some(&true) { visible = false; }
+                // if state.solo_collections.get(&collection.id()) == Some(&true) { visible = true; }
+                // if state.mute_collections.get(&collection.id()) == Some(&true) { visible = false; }
                 if !visible { continue; }
 
                 for path in collection.paths() {
@@ -157,8 +218,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             for i in 0..visible_paths.len() {
                 let path = &visible_paths[i];
 
-                if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-                if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+                // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+                // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
                 let mut visible = true;
                 for v in state.solo_paths.values() {
@@ -202,8 +263,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             }
 
             for path in pathlog.direct_paths.paths() {
-                if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-                if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+                // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+                // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
                 let mut visible = true;
                 for v in state.solo_paths.values() {
@@ -244,9 +305,11 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .min_size([300.0, 300.0])
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
+                            IS_POINTER_OVER_EGUI = ctx.is_pointer_over_area();
+                            EGUI_WANTS_KEYBOARD_INPUT = ctx.wants_keyboard_input();
                             ui::draw_ui(ui, &mut state.egui, &mut state.config, &mut state.pathlog);
                         });
-                    
+
                     egui::Window::new("Timer")
                         .resizable(false)
                         .title_bar(false)
@@ -355,6 +418,30 @@ unsafe extern "system" fn new_wndproc(
     CallWindowProcW(OLD_WNDPROC.unwrap(), hwnd, msg, WPARAM(wparam), LPARAM(lparam))
 }
 
+extern "system" fn hk_mouse_get_device_state(this: *mut c_void, param0: u32, param1: *mut c_void) -> HRESULT {
+    unsafe {
+        if IS_POINTER_OVER_EGUI {
+            let _res = MOUSE_GET_DEVICE_STATE_HOOK.call(this, param0, param1);
+            std::ptr::write_bytes(param1, 0, param0 as usize);
+            return HRESULT(1)
+        }
+
+        MOUSE_GET_DEVICE_STATE_HOOK.call(this, param0, param1)
+    }
+}
+
+extern "system" fn hk_keyboard_get_device_state(this: *mut c_void, param0: u32, param1: *mut c_void) -> HRESULT {
+    unsafe {
+        if EGUI_WANTS_KEYBOARD_INPUT {
+            let _res = KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1);
+            std::ptr::write_bytes(param1, 0, param0 as usize);
+            return HRESULT(1)
+        }
+
+        KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1)
+    }
+}
+
 fn delete_old_logs(logs_path: PathBuf, log_prefix: impl Into<String>, rotation_count: usize) {
     let log_prefix: String = log_prefix.into();
     // Get all files in the logs directory that start with the log prefix
@@ -414,7 +501,7 @@ fn log_setup() {
     let subscriber = tracing_subscriber::Registry::default()
         .with(file_log)
         .with(EnvFilter::from_default_env().add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()));
-    
+
     #[cfg(not(debug_assertions))] {
         tracing::subscriber::set_global_default(subscriber).expect("Unable to set global subscriber");
     }
@@ -448,6 +535,9 @@ fn main() {
         debug.player_speeds.resize(60, 0.);
 
         DEBUG_STATE = Some(debug);
+
+        MOUSE_GET_DEVICE_STATE_HOOK.enable().unwrap();
+        KEYBOARD_GET_DEVICE_STATE_HOOK.enable().unwrap();
     }
 
     ocular::hook_present(hk_present);

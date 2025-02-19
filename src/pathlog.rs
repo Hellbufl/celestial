@@ -275,6 +275,7 @@ pub struct PathLog {
 	recording: bool,
 	direct: bool,
 	autosave: bool,
+    autoreset: bool,
 
     current_file: Option<String>,
 	recording_start: Option<time::Instant>,
@@ -296,6 +297,7 @@ impl PathLog {
             recording: false,
             direct: false,
             autosave: false,
+            autoreset: true,
 
             current_file: None,
 
@@ -315,7 +317,7 @@ impl PathLog {
             error!("Failed to create Paths directory!");
             std::process::exit(1);
         }
-    
+
         info!("Initialized");
 
         pathlog
@@ -334,8 +336,8 @@ impl PathLog {
                 start_trigger.check_point_collision(player_center.into()),
                 finish_trigger.check_point_collision(player_center.into())
             ];
-            
-            if player_in_trigger[0] && !self.primed {
+
+            if player_in_trigger[0] && !self.primed && self.autoreset {
                 self.reset();
                 self.primed = true;
             }
@@ -422,6 +424,10 @@ impl PathLog {
         self.autosave = mode;
     }
 
+    pub fn set_autoreset(&mut self, mode: bool) {
+        self.autoreset = mode;
+    }
+
 	pub fn insert(&mut self, new_path: &Path, collection_id: Uuid) {
         if let Some(index) = self.path_collections.iter().position(|coll| coll.id() == collection_id) {
             self.path_collections[index].add(new_path.clone(), self.filters.get(&collection_id));
@@ -446,6 +452,7 @@ impl PathLog {
         let data = CompFile::from_file(file_path);
         self.triggers = data.get_triggers();
         self.path_collections = data.get_collections();
+        self.current_file = None;
     }
 
     pub fn save_comparison(&mut self, file_path: String) {
@@ -474,6 +481,7 @@ impl PathLog {
             position[2] + player_up.z
         ];
         self.triggers[index] = Some(BoxCollider::new(player_center, rotation, size));
+        self.current_file = None;
     }
 
 	pub fn clear_triggers(&mut self) {
@@ -481,5 +489,6 @@ impl PathLog {
             if !collection.paths.is_empty() { return; }
         }
         self.triggers = [None, None];
+        self.current_file = None;
     }
 }

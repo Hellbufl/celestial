@@ -6,6 +6,7 @@ use egui::Color32;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
+use windows::Win32::UI;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::{HighPassFilter, Path, PathCollection, PathLog};
@@ -21,14 +22,14 @@ enum RX {
 #[derive(PartialEq)]
 pub enum Tab { Comparison, Paths, Config, Credits }
 
-struct Teleport {
-    location: [f32; 3],
+pub struct Teleport {
+    pub location: [f32; 3],
     rotation: [f32; 3],
-    camera_rotation: [f32; 2],
+    camera_rotation: Option<[f32; 2]>,
 }
 
 pub enum UIEvent {
-    RemovePath {
+    DeletePath {
         path_id: Uuid,
         collection_id: Uuid,
     },
@@ -36,6 +37,9 @@ pub enum UIEvent {
         new: bool,
     },
     ChangeAutosave {
+        new: bool,
+    },
+    ChangeAutoReset {
         new: bool,
     },
     SpawnTrigger {
@@ -73,8 +77,12 @@ pub enum UIEvent {
         collection_id: Uuid,
         modifier: u8,
     },
-    Teleport,
-    SpawnTeleport,
+    Teleport {
+        index: usize,
+    },
+    SpawnTeleport {
+        index: usize,
+    },
 }
 
 pub struct UIState {
@@ -90,7 +98,7 @@ pub struct UIState {
     pub solo_paths: HashMap<Uuid, bool>,
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
-    teleport: Option<Teleport>,
+    pub teleports:[ Option<Teleport>; 2],
 }
 
 impl UIState {
@@ -108,7 +116,7 @@ impl UIState {
             solo_paths: HashMap::new(),
             mute_collections: HashMap::new(),
             solo_collections: HashMap::new(),
-            teleport: None,
+            teleports: [None, None],
         };
 
         state
@@ -119,7 +127,7 @@ impl UIState {
 
         while let Some(event) = self.events.pop_front() {
             match event {
-                UIEvent::RemovePath { path_id, collection_id } => {
+                UIEvent::DeletePath { path_id, collection_id } => {
                     self.mute_paths.remove(&path_id);
                     self.solo_paths.remove(&path_id);
                     pathlog.remove(path_id, collection_id);
@@ -130,6 +138,9 @@ impl UIState {
                 UIEvent::ChangeAutosave { new } => {
                     pathlog.set_autosave(new);
                 }
+                UIEvent::ChangeAutoReset { new } => {
+                    pathlog.set_autoreset(new);
+                }
                 UIEvent::SpawnTrigger { index, position, rotation, size } => {
                     let mut empty = true;
                     for collection in &pathlog.path_collections {
@@ -137,6 +148,7 @@ impl UIState {
                     }
                     if empty {
                         pathlog.create_trigger(index, position, rotation, size);
+                        self.events.push_back(UIEvent::SpawnTeleport { index });
                     }
                     else {
                         // TODO warning
@@ -173,6 +185,12 @@ impl UIState {
                 }
                 UIEvent::DeleteCollection { id } => {
                     if let Some(index) = pathlog.path_collections.iter().position(|c| c.id() == id) {
+
+                        for path in pathlog.path_collections[index].paths() {
+                            self.mute_paths.remove(&path.id());
+                            self.solo_paths.remove(&path.id());
+                        }
+
                         self.mute_collections.remove(&id);
                         self.solo_collections.remove(&id);
                         pathlog.path_collections.remove(index);
@@ -252,7 +270,42 @@ impl UIState {
                     }
                     else if let Some(RX::Load { rx }) = &self.file_path_rx {
                         if let Ok(dialog_result) = rx.try_recv() {
-                            if let Ok(Some(path)) = dialog_result { pathlog.load_comparison(path.to_str().unwrap().to_string()); }
+                            if let Ok(Some(path)) = dialog_result {
+                                pathlog.load_comparison(path.to_str().unwrap().to_string());
+
+                                self.mute_collections.clear();
+                                self.solo_collections.clear();
+                                self.selected_paths.clear();
+                                self.mute_paths.clear();
+                                self.solo_paths.clear();
+
+                                for collection in &pathlog.path_collections {
+                                    self.mute_collections.insert(collection.id(), false);
+                                    self.solo_collections.insert(collection.id(), false);
+                                    self.selected_paths.insert(collection.id(), Vec::new());
+
+                                    for path in collection.paths() {
+                                        self.mute_paths.insert(path.id(), false);
+                                        self.solo_paths.insert(path.id(), false);
+                                    }
+                                }
+
+                                if let Some(start_trigger) = pathlog.triggers[0] {
+                                    self.teleports[0] = Some(Teleport {
+                                        location: start_trigger.position(),
+                                        rotation: start_trigger.rotation(),
+                                        camera_rotation: None,
+                                    })
+                                }
+
+                                if let Some(end_trigger) = pathlog.triggers[1] {
+                                    self.teleports[1] = Some(Teleport {
+                                        location: end_trigger.position(),
+                                        rotation: end_trigger.rotation(),
+                                        camera_rotation: None,
+                                    })
+                                }
+                            }
                             self.file_path_rx = None;
                         }
                         else { loop_events.push_back(UIEvent::LoadComparison); }
@@ -285,17 +338,20 @@ impl UIState {
                         }
                     }
                 }
-                UIEvent::Teleport => {
-                    if let Some(teleport) = &self.teleport {
+                UIEvent::Teleport { index } => {
+                    if let Some(teleport) = &self.teleports[index] {
                         gamedata::teleport_player(teleport.location, teleport.rotation);
-                        gamedata::set_camera_rotation(teleport.camera_rotation);
+                        if let Some(cam_rotation) = teleport.camera_rotation {
+                            gamedata::set_camera_rotation(cam_rotation);
+                        }
+                        loop_events.push_back(UIEvent::ResetRecording);
                     }
                 }
-                UIEvent::SpawnTeleport => {
-                    self.teleport = Some(Teleport {
+                UIEvent::SpawnTeleport { index } => {
+                    self.teleports[index] = Some(Teleport {
                         location: gamedata::get_player_position(),
                         rotation: gamedata::get_player_rotation(),
-                        camera_rotation: gamedata::get_camera_rotation(),
+                        camera_rotation: Some(gamedata::get_camera_rotation()),
                     })
                 }
             }
@@ -307,7 +363,7 @@ impl UIState {
 
 pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut ConfigState) {
     let events = &input.events;
-    
+
     egui.modifier = 0;
 
     if input.modifiers.shift {
@@ -329,7 +385,7 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
                     rotation: gamedata::get_player_rotation(),
                     size: config.trigger_size[0],
                 });
-                egui.events.push_back(UIEvent::SpawnTeleport);
+                // egui.events.push_back(UIEvent::SpawnTeleport { index: 0 });
             }
         }
 
@@ -343,6 +399,7 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
                     rotation: gamedata::get_player_rotation(),
                     size: config.trigger_size[1],
                 });
+                // egui.events.push_back(UIEvent::SpawnTeleport { index: 1 });
             }
         }
 
@@ -354,17 +411,24 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
             egui.events.push_back(UIEvent::ClearTriggers);
         }
 
-        if config.teleport_keybind.compare_to_event(e) {
-            egui.events.push_back(UIEvent::Teleport);
-            unsafe { DEBUG_STATE.as_mut().unwrap().calc_avg = true; }
+        if config.teleport_keybinds[0].compare_to_event(e) {
+            egui.events.push_back(UIEvent::Teleport { index: 0 });
+            // unsafe { DEBUG_STATE.as_mut().unwrap().calc_avg = true; }
         }
 
-        if config.spawn_teleport_keybind.compare_to_event(e) {
-            egui.events.push_back(UIEvent::SpawnTeleport);
+        if config.teleport_keybinds[1].compare_to_event(e) {
+            egui.events.push_back(UIEvent::Teleport { index: 1 });
+        }
+
+        if config.spawn_teleport_keybinds[0].compare_to_event(e) {
+            egui.events.push_back(UIEvent::SpawnTeleport { index: 0 });
+        }
+
+        if config.spawn_teleport_keybinds[1].compare_to_event(e) {
+            egui.events.push_back(UIEvent::SpawnTeleport { index: 1 });
         }
     }
 }
-
 
 pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, pathlog: &mut PathLog) {
     ui.visuals_mut().selection.bg_fill = config.accent_colors[0];
@@ -485,7 +549,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-                
+
                 let mut mute_button_text = egui::RichText::new("\u{2B06}");
                 if let Some(HighPassFilter::GOLD) = pathlog.filters.get(&collection.id()) {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
@@ -530,7 +594,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
                             state.selected_paths.get_mut(&collection.id()).unwrap().clear();
                             state.renaming_collection = None;
                         }
-                
+
                         for path in collection.paths() {
                             draw_path(ui, state, config, pathlog, path, &collection);
                         }
@@ -673,7 +737,7 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
         if state.delete_mode {
             if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                 state.selected_paths.get_mut(&collection.id()).unwrap().clear();
-                state.events.push_back(UIEvent::RemovePath { path_id: path.id(), collection_id: collection.id() });
+                state.events.push_back(UIEvent::DeletePath { path_id: path.id(), collection_id: collection.id() });
             }
         }
     });
@@ -703,6 +767,14 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if toggle_switch(ui, &mut config.autosave).clicked() {
                     state.events.push_back(UIEvent::ChangeAutosave { new: config.autosave });
+                }
+            });
+            ui.end_row();
+
+            ui.label("Reset Recording on Start");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if toggle_switch(ui, &mut config.autoreset).clicked() {
+                    state.events.push_back(UIEvent::ChangeAutoReset { new: config.autoreset });
                 }
             });
             ui.end_row();
@@ -773,15 +845,27 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             });
             ui.end_row();
 
-            ui.label("Teleport to Start");
+            ui.label("Teleport to Location 1");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut config.teleport_keybind, "teleport_keybind"));
+                ui.add(Keybind::new(&mut config.teleport_keybinds[0], "teleport_1_keybind"));
             });
             ui.end_row();
 
-            ui.label("Set Teleport Location");
+            ui.label("Teleport to Location 2");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut config.spawn_teleport_keybind, "spawn_teleport_keybind"));
+                ui.add(Keybind::new(&mut config.teleport_keybinds[1], "teleport_2_keybind"));
+            });
+            ui.end_row();
+
+            ui.label("Set Teleport Location 1");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(Keybind::new(&mut config.spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
+            });
+            ui.end_row();
+
+            ui.label("Set Teleport Location 2");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(Keybind::new(&mut config.spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
             });
             ui.end_row();
         });

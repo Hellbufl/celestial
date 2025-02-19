@@ -1,9 +1,6 @@
 ### Todo
 
-- make wolf give me the fix for inputs going through egui
-
 - rework teleport system
-- check save dialog edge cases
 - make autosave not destroy your files lmao
 - get some cool screenshots for the github
 - move paths between collections (copy aswell?)

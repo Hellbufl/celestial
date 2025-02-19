@@ -10,14 +10,15 @@ pub struct ConfigState {
 	// pub show_ui: bool,
 	pub direct_mode: bool,
     pub autosave: bool,
+    pub autoreset: bool,
 	// pub toggle_window_keybind: Shortcut,
 	pub start_keybind: Shortcut,
 	pub stop_keybind: Shortcut,
 	pub reset_keybind: Shortcut,
 	pub clear_keybind: Shortcut,
 
-	pub teleport_keybind: Shortcut,
-	pub spawn_teleport_keybind: Shortcut,
+	pub teleport_keybinds: [Shortcut; 2],
+	pub spawn_teleport_keybinds: [Shortcut; 2],
 
 	pub trigger_size: [[f32; 3]; 2],
     pub timer_size: f32,
@@ -38,14 +39,22 @@ impl ConfigState {
             // show_ui: true,
             direct_mode: false,
             autosave: false,
+            autoreset: true,
             // toggle_window_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Home}), None),
             start_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Comma}), None),
             stop_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Period}), None),
             reset_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Minus}), None),
             clear_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Delete}), None),
 
-            teleport_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Home}), None),
-            spawn_teleport_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
+            teleport_keybinds: [
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::K}), None),
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::L}), None),
+            ],
+
+            spawn_teleport_keybinds: [
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Period}), None),
+            ],
 
             trigger_size: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
             timer_size: 24.,
@@ -72,14 +81,17 @@ impl ConfigState {
         let section = conf.section(Some("Celestial")).unwrap();
 
         // self.show_ui = section.get("show_ui").unwrap().parse::<bool>().unwrap();
+        self.autoreset = section.get("autoreset").unwrap_or("true").parse::<bool>().unwrap();
         // self.toggle_window_keybind = Shortcut::from_string(section.get("toggle_window_keybind").unwrap_or(self.toggle_window_keybind.to_string().as_str()));
         self.start_keybind = Shortcut::from_string(section.get("start_keybind").unwrap_or(self.start_keybind.to_string().as_str()));
         self.stop_keybind = Shortcut::from_string(section.get("stop_keybind").unwrap_or(self.stop_keybind.to_string().as_str()));
         self.reset_keybind = Shortcut::from_string(section.get("reset_keybind").unwrap_or(self.reset_keybind.to_string().as_str()));
         self.clear_keybind = Shortcut::from_string(section.get("clear_keybind").unwrap_or(self.clear_keybind.to_string().as_str()));
 
-        self.teleport_keybind = Shortcut::from_string(section.get("teleport_keybind").unwrap_or(self.teleport_keybind.to_string().as_str()));
-        self.spawn_teleport_keybind = Shortcut::from_string(section.get("spawn_teleport_keybind").unwrap_or(self.spawn_teleport_keybind.to_string().as_str()));
+        self.teleport_keybinds[0] = Shortcut::from_string(section.get("teleport_1_keybind").unwrap_or(self.teleport_keybinds[0].to_string().as_str()));
+        self.teleport_keybinds[1] = Shortcut::from_string(section.get("teleport_2_keybind").unwrap_or(self.teleport_keybinds[1].to_string().as_str()));
+        self.spawn_teleport_keybinds[0] = Shortcut::from_string(section.get("spawn_teleport_1_keybind").unwrap_or(self.spawn_teleport_keybinds[0].to_string().as_str()));
+        self.spawn_teleport_keybinds[1] = Shortcut::from_string(section.get("spawn_teleport_2_keybind").unwrap_or(self.spawn_teleport_keybinds[1].to_string().as_str()));
 
         self.trigger_size[0] = serde_json::from_str(section.get("start_trigger_size").unwrap()).unwrap();
         self.trigger_size[1] = serde_json::from_str(section.get("end_trigger_size").unwrap()).unwrap();
@@ -104,14 +116,17 @@ impl ConfigState {
 
         conf.with_section(Some("Celestial"))
             // .set("show_ui", self.show_ui.to_string())
+            .set("autoreset", self.autoreset.to_string())
             // .set("toggle_window_keybind", shortcut_to_string(self.toggle_window_keybind))
             .set("start_keybind", self.start_keybind.to_string())
             .set("stop_keybind", self.stop_keybind.to_string())
             .set("reset_keybind", self.reset_keybind.to_string())
             .set("clear_keybind", self.clear_keybind.to_string())
 
-            .set("teleport_keybind", self.teleport_keybind.to_string())
-            .set("spawn_teleport_keybind", self.spawn_teleport_keybind.to_string())
+            .set("teleport_1_keybind", self.teleport_keybinds[0].to_string())
+            .set("teleport_2_keybind", self.teleport_keybinds[1].to_string())
+            .set("spawn_teleport_1_keybind", self.spawn_teleport_keybinds[0].to_string())
+            .set("spawn_teleport_2_keybind", self.spawn_teleport_keybinds[1].to_string())
 
             .set("start_trigger_size", format!("{:?}", self.trigger_size[0]))
             .set("end_trigger_size", format!("{:?}", self.trigger_size[1]))
@@ -162,14 +177,14 @@ impl ShortcutString for Shortcut {
     fn from_string(stringcut: &str) -> Shortcut {
         let mut keys: Vec<&str> = stringcut.split("+").collect();
         let key = keys.pop();
-    
+
         if key.is_none() {
             return Shortcut::NONE;
         }
-    
+
         let mut keyboard : KeyboardShortcut;
         unsafe { keyboard = KeyboardShortcut::new(Modifiers::NONE, std::mem::transmute::<_, Key>(key.unwrap().parse::<u8>().unwrap())); }
-    
+
         for m in keys {
             match m {
                 "alt" => keyboard.modifiers.alt = true,
@@ -180,7 +195,7 @@ impl ShortcutString for Shortcut {
                 _ => error!("Invalid modifier key: {m}"),
             }
         }
-    
+
         Shortcut::new(Some(keyboard), None)
     }
 }

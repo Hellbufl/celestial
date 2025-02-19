@@ -20,7 +20,7 @@ pub fn set_player_position(new_pos: [f32; 3]) {
     let player_addr: usize = unsafe { std::ptr::read((process_start + 0x1020948) as *const _) };
     if player_addr == 0 { return }
 
-    unsafe{ 
+    unsafe {
         std::ptr::write((player_addr + 0x50) as *mut _, new_pos);
     };
 }
@@ -44,7 +44,7 @@ pub fn set_player_rotation(new_rot: [f32; 3]) {
     let player_addr: usize = unsafe { std::ptr::read((process_start + 0x01020BE0) as *const _) };
     if player_addr == 0 { return }
 
-    unsafe{ 
+    unsafe {
         std::ptr::write((player_addr + 0x90) as *mut _, new_rot);
     };
 }
@@ -68,7 +68,7 @@ pub fn get_camera_rotation() -> [f32; 2] {
 pub fn set_camera_rotation(new_rot: [f32; 2]) {
     let process_start = unsafe { GetModuleHandleA(PCSTR::null()).unwrap().0 };
 
-    unsafe{ 
+    unsafe {
         std::ptr::write((process_start + 0x1020C60) as *mut _, new_rot);
     };
 }
@@ -92,7 +92,7 @@ pub fn set_player_state(new_state: [u32; 2]) {
     let player_addr: usize = unsafe { std::ptr::read((process_start + 0x01020BE0) as *const _) };
     if player_addr == 0 { return }
 
-    unsafe{ 
+    unsafe {
         std::ptr::write((player_addr + 0x670) as *mut _, new_state);
     };
 }
@@ -150,6 +150,6 @@ pub fn teleport_player(location: [f32; 3], rotation: [f32; 3]) {
     }
 
     let teleport_function = unsafe {std::mem::transmute::<_, extern "C" fn(usize, [f32; 3], [f32; 3], i32, f32)>(process_start + 0x4f0EA0) };
-    
+
     teleport_function(player_addr, location, rotation, 1, 0.);
 }
