@@ -1,7 +1,5 @@
 ### Todo
 
-- rework teleport system
-- make autosave not destroy your files lmao
 - get some cool screenshots for the github
 - move paths between collections (copy aswell?)
 - move collections
