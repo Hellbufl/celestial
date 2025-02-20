@@ -1,12 +1,13 @@
 use std::collections::{HashMap, VecDeque};
+use std::f32::consts::PI;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
+use egui::epaint::Hsva;
 use egui::Color32;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
-use windows::Win32::UI;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::{HighPassFilter, Path, PathCollection, PathLog};
@@ -20,7 +21,7 @@ enum RX {
 }
 
 #[derive(PartialEq)]
-pub enum Tab { Comparison, Paths, Config, Credits }
+pub enum Tab { Comparison, Paths, Config, Credits, CustomShapes }
 
 pub struct Teleport {
     pub location: [f32; 3],
@@ -85,6 +86,54 @@ pub enum UIEvent {
     },
 }
 
+// enum Shape {
+//     Box {
+//         position: [f32; 3],
+//         rotation: [f32; 3],
+//         size: [f32; 3],
+//     },
+//     Cylinder {
+//         position: [f32; 3],
+//         radius: f32,
+//         height: f32,
+//     },
+//     Sphere {
+//         position: [f32; 3],
+//         radius: f32,
+//     },
+// }
+
+#[derive(Debug, PartialEq)]
+pub enum ShapeType {
+    Box,
+    Sphere,
+    Cylinder,
+}
+
+pub struct Shape {
+    pub id: Uuid,
+    pub shape_type: ShapeType,
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub size: [f32; 3],
+    // pub color: [f32; 4],
+    pub color: Hsva,
+}
+
+impl Shape {
+    pub fn new() -> Self {
+        Shape {
+            id: Uuid::new_v4(),
+            shape_type: ShapeType::Box,
+            position: [0., 0., 0.],
+            rotation: [0., 0., 0.],
+            size: [1., 1., 1.],
+            // color: [1., 1., 1., 1.],
+            color: Hsva::from_rgb([1., 1., 1.]),
+        }
+    }
+}
+
 pub struct UIState {
     pub events: VecDeque<UIEvent>,
     file_path_rx: Option<RX>,
@@ -99,6 +148,8 @@ pub struct UIState {
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
     pub teleports:[ Option<Teleport>; 2],
+
+    pub custom_shapes: Vec<(Shape, bool)>,
 }
 
 impl UIState {
@@ -117,6 +168,7 @@ impl UIState {
             mute_collections: HashMap::new(),
             solo_collections: HashMap::new(),
             teleports: [None, None],
+            custom_shapes: Vec::new(),
         };
 
         state
@@ -439,6 +491,7 @@ pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState,
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         ui.selectable_value(&mut state.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
         // ui.selectable_value(&mut state.tab, Tab::Paths, egui::RichText::new("Paths").strong());
+        ui.selectable_value(&mut state.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
         ui.selectable_value(&mut state.tab, Tab::Config, egui::RichText::new("Config").strong());
         ui.selectable_value(&mut state.tab, Tab::Credits, egui::RichText::new("Credits").strong());
     });
@@ -448,7 +501,8 @@ pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState,
     ui.spacing_mut().item_spacing = egui::vec2(10.0, 3.0);
 
     draw_comparison_tab(ui, state, config, pathlog);
-    draw_paths_tab(ui, state, config, pathlog);
+    // draw_paths_tab(ui, state, config, pathlog);
+    draw_custom_shapes_tab(ui, state, config);
     draw_config_tab(ui, state, config);
     draw_credits_tab(ui, state);
 }
@@ -649,8 +703,8 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, 
 }
 
 fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog, path: &Path, collection: &PathCollection) {
-    if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-    if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+    // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+    // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
 
@@ -705,7 +759,7 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
         let time = path.time();
         // let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
 
-        let mut time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000)));
+        let time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000)));
 
         let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0)));
 
@@ -1011,6 +1065,171 @@ fn draw_credits_tab(ui: &mut egui::Ui, state: &mut UIState) {
 
             ui.hyperlink_to("Percy", "https://www.twitch.tv/percyz01");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
+            ui.end_row();
+        });
+}
+
+fn draw_custom_shapes_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState) {
+    if state.tab != Tab::CustomShapes { return; }
+    ui.separator();
+
+    let mut delete_list: Vec<Uuid> = Vec::new();
+
+    // egui::Grid::new("shapes_grid")
+    // .num_columns(2)
+    // .spacing([40.0, 1.0])
+    // .striped(true)
+    // .show(ui, |ui| {
+        for i in 0..state.custom_shapes.len() {
+            let shape = &mut state.custom_shapes[i];
+
+            //
+
+            egui::Grid::new(shape.0.id.to_string() + "buttons")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                    let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                    let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+
+                    if shape.1 {
+                        ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                        ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                        mute_button_text = mute_button_text.strong();
+                    }
+
+                    if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                        shape.1 ^= true;
+                    }
+
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
+                    egui::ComboBox::new(shape.0.id.to_string() + "drop_down", "")
+                    .selected_text(format!("{:?}", shape.0.shape_type))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Box, "Box");
+                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Sphere, "Sphere");
+                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
+                    });
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.color_edit_button_hsva(&mut shape.0.color);
+                });
+                ui.end_row();
+            });
+
+            egui::CollapsingHeader::new("").id_source(shape.0.id.to_string() + "collapsing")
+                .show(ui, |ui| {
+                    egui::Grid::new(shape.0.id.to_string() + "paths")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .striped(false)
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                            ui.label("Position");
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            ui.add(egui::DragValue::new(&mut shape.0.position[2]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut shape.0.position[1]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut shape.0.position[0]).speed(0.1));
+                        });
+                        ui.end_row();
+
+                        match shape.0.shape_type {
+                            ShapeType::Box => {
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.label("Rotation");
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[2]).speed(0.01).clamp_range(-PI..=PI));
+                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[1]).speed(0.01).clamp_range(-PI..=PI));
+                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[0]).speed(0.01).clamp_range(-PI..=PI));
+                                });
+                                ui.end_row();
+
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.label("Size");
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[2]).speed(0.1).clamp_range(0.0..=42069.0));
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                                });
+                                ui.end_row();
+                            }
+                            ShapeType::Sphere => {
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.label("Radius");
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                                });
+                                ui.end_row();
+                            }
+                            ShapeType::Cylinder => {
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.label("Height");
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
+                                });
+                                ui.end_row();
+
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.label("Radius");
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                                });
+                                ui.end_row();
+                            }
+                        }
+                    });
+                });
+
+            ui.separator();
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                if state.delete_mode {
+                    if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                        delete_list.push(shape.0.id);
+                    }
+                }
+            });
+
+            ui.end_row();
+        }
+    // });
+
+    for id in delete_list {
+        let pos = state.custom_shapes.iter().position(|s| s.0.id == id);
+        if let Some(i) = pos { state.custom_shapes.remove(i); }
+    }
+
+    egui::Grid::new("util")
+        .num_columns(2)
+        .spacing([40.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.delete_mode ^= true;
+                }
+                if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    // state.events.push_back(UIEvent::CreateShape);
+                    state.custom_shapes.push((Shape::new(), false));
+                }
+            });
             ui.end_row();
         });
 }

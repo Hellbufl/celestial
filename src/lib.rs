@@ -1,6 +1,7 @@
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
+use egui::layers::ShapeIdx;
 use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
@@ -166,6 +167,33 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             pintar.set_default_view_proj(gamedata::get_view_matrix());
 
             render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
+
+            for shape in &state.custom_shapes {
+                if shape.1 { continue; }
+                match shape.0.shape_type {
+                    ShapeType::Box => {
+                        pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
+                            .scale(shape.0.size)
+                            .rotate(shape.0.rotation)
+                            .translate(shape.0.position));
+                    }
+                    ShapeType::Sphere => {
+                        let mut size = shape.0.size;
+                        size[1] = size[0];
+                        size[2] = size[0];
+                        pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
+                            .scale(size)
+                            .translate(shape.0.position));
+                    }
+                    ShapeType::Cylinder => {
+                        let mut size = shape.0.size;
+                        size[2] = size[0];
+                        pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
+                            .scale(size)
+                            .translate(shape.0.position));
+                    }
+                }
+            }
 
             if let Some(teleport) = &state.teleports[0] {
                 let pos = teleport.location;
