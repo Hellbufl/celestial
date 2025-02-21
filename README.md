@@ -8,28 +8,20 @@ Thank you to [Woeful Wolf](https://github.com/WoefulWolf/) again for helping me 
 - Automatic comparison and sorting of times
 - 3D visualization with depth-buffer rendering
 
-# Planned Features
-UI:
-- changing collection order
-- moving paths between collections
-- popup messages and generally more info in-app
-
-Quality of Life:
-- saving position of timer in config (it's really hard for some reason to get the window position)
-
+For planned features and an overview of what I'm working on, read my [Todo](https://github.com/Hellbufl/celestial/blob/main/TODO.md).\
 If you have an idea for a feature please feel free to message me on discord!\
 I'm also happy to receive pull requests :)
 
 # Installation
 1. Download the [latest release](https://github.com/Hellbufl/celestial/releases)
-    > Google Chrome blocks the download, use Firefox instead
+    > Google Chrome might block the download, use Firefox instead
 2. Put it in your game folder next to NieRAutomata.exe
-3. Rename "celestial.dll" to one of the [Supported Files](#supported-files)
+3. Rename "celestial.dll" to one of the supported files below
 
-# Supported Files
+### Supported Files
 | Game          | Working Proxies                           |
 | ---           | ---                                       |
-| NieR:Automata | `dxgi.dll`, `d3d11.dll`, `dinput8.dll`    |
+| NieR:Automata | `d3d11.dll (recommended)`, `dxgi.dll`, `dinput8.dll`    |
 
 # Usage
 - Look up default keybinds in the config tab
