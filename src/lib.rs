@@ -1,11 +1,12 @@
+#![allow(static_mut_refs)]
+
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
-use egui::layers::ShapeIdx;
 use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
-use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH, UNWIND_HISTORY_TABLE_SIZE};
+use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 use windows::Win32::Foundation::{BOOL, HMODULE, LRESULT, WPARAM, LPARAM};
 use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
@@ -16,7 +17,6 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::Devices::HumanInterfaceDevice::{DirectInput8Create, IDirectInput8A, IDirectInputDevice8A, GUID_SysMouse, GUID_SysKeyboard};
 use windows::core::ComInterface;
 use windows::core::Interface;
-use windows::core::GUID;
 use retour::GenericDetour;
 use once_cell::sync::Lazy;
 
@@ -33,16 +33,20 @@ mod tether;
 pub mod gamedata;
 pub mod config;
 pub mod pathlog;
+pub mod pathdata;
 pub mod ui;
+pub mod error;
 
 use config::*;
 use pathlog::*;
+use pathdata::*;
 use ui::*;
 
 use ocular;
 use pintar::Pintar;
 
 // static TICKRATE : u32 = 60;
+
 
 static mut GLOBAL_STATE : Option<GlobalState> = None;
 static mut DEBUG_STATE : Option<DebugState> = None;
@@ -95,7 +99,7 @@ impl GlobalState {
     pub fn new() -> GlobalState {
         GlobalState {
             pathlog: PathLog::new(),
-            config: ConfigState::new(),
+            config: ConfigState::init(),
             egui: UIState::new(),
         }
     }
@@ -106,7 +110,7 @@ pub struct DebugState {
     copy_time: u64,
 
     frame_count: usize,
-    calc_avg: bool,
+    // calc_avg: bool,
     last_frame: Instant,
     last_player_pos: Vec3,
     player_speeds: Vec<f32>,
@@ -162,9 +166,18 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             let pathlog = &mut GLOBAL_STATE.as_mut().unwrap().pathlog;
             let config = &GLOBAL_STATE.as_mut().unwrap().config;
 
+            // if gamedata::get_is_loading() {
+            //     pathlog.pause();
+            // } else {
+            //     pathlog.unpause();
+            // }
+
             pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
 
             pintar.set_default_view_proj(gamedata::get_view_matrix());
+
+            // debug
+            // pintar.add_gs_line([0., 0., 0.], gamedata::get_player_position(), [1., 0., 1., 1.], 0.5);
 
             render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
 
@@ -290,23 +303,27 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 render_path(&path, pintar, color, thick);
             }
 
-            for path in pathlog.direct_paths.paths() {
-                // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-                // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+            // for path in pathlog.direct_paths.paths() {
+            //     // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+            //     // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
-                let mut visible = true;
-                for v in state.solo_paths.values() {
-                    if *v {visible = false;}
-                }
-                if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-                if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
-                if !visible { continue; }
-                render_path(&path, pintar, [1.0, 1.0, 1.0, 1.0], 0.02);
+            //     let mut visible = true;
+            //     for v in state.solo_paths.values() {
+            //         if *v {visible = false;}
+            //     }
+            //     if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
+            //     if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
+            //     if !visible { continue; }
+            //     render_path(&path, pintar, [1.0, 1.0, 1.0, 1.0], 0.02);
+            // }
+
+            for collider in &pathlog.checkpoint_triggers {
+                pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
             }
 
             for i in 0..2 {
-                if let Some(collider) = pathlog.triggers[i] {
-                    pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size()).rotate(collider.rotation()).translate(collider.position()));
+                if let Some(collider) = pathlog.main_triggers[i] {
+                    pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
                 }
             }
 
@@ -414,11 +431,10 @@ extern "system" fn hk_om_set_render_targets(
 }
 
 fn render_path(path: &Path, pintar: &mut Pintar, color: [f32; 4], thickness: f32) {
-    if path.len() < 2 { return; }
-
-    let debug_benchmark = pintar.add_line(path.nodes(), color, thickness);
-
-    unsafe { DEBUG_STATE.as_mut().unwrap().copy_time += debug_benchmark; }
+    for segment in path.segments() {
+        if segment.len() < 2 { continue; }
+        pintar.add_line(segment, color, thickness);
+    }
 }
 
 fn draw_debug(ui: &mut egui::Ui) {
@@ -553,7 +569,7 @@ fn main() {
             frame_time: 0,
             copy_time: 0,
             frame_count: 0,
-            calc_avg: false,
+            // calc_avg: false,
             last_frame: Instant::now(),
             last_player_pos: Vec3::ZERO,
             player_speeds: Vec::with_capacity(60),

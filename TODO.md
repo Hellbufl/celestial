@@ -1,5 +1,8 @@
 ### Todo
 
+- cleaner error handling (wip)
+- implement load removed timing via path segments (almost done?)
+- replace static mut refs with mutexes or some shit !
 - get some cool screenshots for the github
 - move paths between collections (copy aswell?)
 - move collections
@@ -18,6 +21,5 @@
 - culling
 - limit drawn lines per collection by only drawing first 10 and then every Nth so that 10+M/N = MAX
 - double buffered recording so the filled buffer can be saved to disk and discarded when other gets full
-- manual editing of triggers in ui
 - section triggers
-- use ingame triggers for start and end
+- use ingame triggers

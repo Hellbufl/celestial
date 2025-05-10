@@ -8,10 +8,12 @@ use egui::Color32;
 use uuid::Uuid;
 use native_dialog::FileDialog;
 use egui_keybind::Keybind;
+use tracing::error;
 
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
-use crate::pathlog::{HighPassFilter, Path, PathCollection, PathLog};
-use crate::{gamedata, DEBUG_STATE};
+use crate::pathlog::PathLog;
+use crate::pathdata::{BoxCollider, HighPassFilter, Path, PathCollection};
+use crate::gamedata;
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
@@ -21,7 +23,7 @@ enum RX {
 }
 
 #[derive(PartialEq)]
-pub enum Tab { Comparison, Paths, Config, Credits, CustomShapes }
+pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
 
 pub struct Teleport {
     pub location: [f32; 3],
@@ -86,23 +88,6 @@ pub enum UIEvent {
     },
 }
 
-// enum Shape {
-//     Box {
-//         position: [f32; 3],
-//         rotation: [f32; 3],
-//         size: [f32; 3],
-//     },
-//     Cylinder {
-//         position: [f32; 3],
-//         radius: f32,
-//         height: f32,
-//     },
-//     Sphere {
-//         position: [f32; 3],
-//         radius: f32,
-//     },
-// }
-
 #[derive(Debug, PartialEq)]
 pub enum ShapeType {
     Box,
@@ -111,7 +96,7 @@ pub enum ShapeType {
 }
 
 pub struct Shape {
-    pub id: Uuid,
+    id: Uuid,
     pub shape_type: ShapeType,
     pub position: [f32; 3],
     pub rotation: [f32; 3],
@@ -132,6 +117,10 @@ impl Shape {
             color: Hsva::from_rgb([1., 1., 1.]),
         }
     }
+
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
 }
 
 pub struct UIState {
@@ -148,6 +137,7 @@ pub struct UIState {
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
     pub teleports:[ Option<Teleport>; 2],
+    pub hide_checkpoints: bool,
 
     pub custom_shapes: Vec<(Shape, bool)>,
 }
@@ -168,6 +158,7 @@ impl UIState {
             mute_collections: HashMap::new(),
             solo_collections: HashMap::new(),
             teleports: [None, None],
+            hide_checkpoints: false,
             custom_shapes: Vec::new(),
         };
 
@@ -194,16 +185,16 @@ impl UIState {
                     pathlog.set_autoreset(new);
                 }
                 UIEvent::SpawnTrigger { index, position, rotation, size } => {
-                    let mut empty = true;
-                    for collection in &pathlog.path_collections {
-                        empty &= collection.paths().is_empty();
-                    }
-                    if empty {
+                    // let mut empty = true;
+                    // for collection in &pathlog.path_collections {
+                    //     empty &= collection.paths().is_empty();
+                    // }
+                    if pathlog.is_empty() {
                         pathlog.create_trigger(index, position, rotation, size);
                         self.events.push_back(UIEvent::SpawnTeleport { index });
                     }
                     else {
-                        // TODO warning
+                        // TODO: popup warning
                     }
                 }
                 UIEvent::StartRecording => {
@@ -249,13 +240,6 @@ impl UIState {
                     }
                 }
                 UIEvent::ToggleActive { id } => {
-                    // if let Some(index) = pathlog.active_collections.iter().position(|x| *x == id) {
-                    //     pathlog.active_collections.remove(index);
-                    // }
-                    // else {
-                    //     pathlog.active_collections.push(id);
-                    // }
-
                     if pathlog.active_collection == Some(id) {
                         pathlog.active_collection = None;
                     }
@@ -323,7 +307,10 @@ impl UIState {
                     else if let Some(RX::Load { rx }) = &self.file_path_rx {
                         if let Ok(dialog_result) = rx.try_recv() {
                             if let Ok(Some(path)) = dialog_result {
-                                pathlog.load_comparison(path.to_str().unwrap().to_string());
+                                if let Err(e) = pathlog.load_comparison(path.to_str().unwrap().to_string()) {
+                                    error!("{e}");
+                                    continue;
+                                }
 
                                 self.mute_collections.clear();
                                 self.solo_collections.clear();
@@ -342,17 +329,17 @@ impl UIState {
                                     }
                                 }
 
-                                if let Some(start_trigger) = pathlog.triggers[0] {
+                                if let Some(start_trigger) = pathlog.main_triggers[0] {
                                     self.teleports[0] = Some(Teleport {
-                                        location: start_trigger.position(),
+                                        location: start_trigger.position,
                                         rotation: start_trigger.rotation(),
                                         camera_rotation: None,
                                     })
                                 }
 
-                                if let Some(end_trigger) = pathlog.triggers[1] {
+                                if let Some(end_trigger) = pathlog.main_triggers[1] {
                                     self.teleports[1] = Some(Teleport {
-                                        location: end_trigger.position(),
+                                        location: end_trigger.position,
                                         rotation: end_trigger.rotation(),
                                         camera_rotation: None,
                                     })
@@ -376,7 +363,7 @@ impl UIState {
                             let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
                             if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
                             for p in &collection.paths()[this_pos..last_pos] {
-                                if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);} // TODO: for some reason shift select only works upwards
+                                if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);}
                                 else { selected.push(p.id()) }
                             }
                         },
@@ -400,6 +387,7 @@ impl UIState {
                     }
                 }
                 UIEvent::SpawnTeleport { index } => {
+                    if index > 1 { continue; }
                     self.teleports[index] = Some(Teleport {
                         location: gamedata::get_player_position(),
                         rotation: gamedata::get_player_rotation(),
@@ -437,7 +425,6 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
                     rotation: gamedata::get_player_rotation(),
                     size: config.trigger_size[0],
                 });
-                // egui.events.push_back(UIEvent::SpawnTeleport { index: 0 });
             }
         }
 
@@ -451,7 +438,6 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
                     rotation: gamedata::get_player_rotation(),
                     size: config.trigger_size[1],
                 });
-                // egui.events.push_back(UIEvent::SpawnTeleport { index: 1 });
             }
         }
 
@@ -465,7 +451,6 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
 
         if config.teleport_keybinds[0].compare_to_event(e) {
             egui.events.push_back(UIEvent::Teleport { index: 0 });
-            // unsafe { DEBUG_STATE.as_mut().unwrap().calc_avg = true; }
         }
 
         if config.teleport_keybinds[1].compare_to_event(e) {
@@ -479,6 +464,15 @@ pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut Conf
         if config.spawn_teleport_keybinds[1].compare_to_event(e) {
             egui.events.push_back(UIEvent::SpawnTeleport { index: 1 });
         }
+
+        // if config.spawn_checkpoint_keybind.compare_to_event(e) {
+        //     egui.events.push_back(UIEvent::SpawnTrigger {
+        //         index: 2,
+        //         position: gamedata::get_player_position(),
+        //         rotation: gamedata::get_player_rotation(),
+        //         size: config.trigger_size[1],
+        //     });
+        // }
     }
 }
 
@@ -490,8 +484,10 @@ pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState,
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         ui.selectable_value(&mut state.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
-        // ui.selectable_value(&mut state.tab, Tab::Paths, egui::RichText::new("Paths").strong());
-        ui.selectable_value(&mut state.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
+        ui.selectable_value(&mut state.tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
+        if config.custom_shapes {
+            ui.selectable_value(&mut state.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
+        }
         ui.selectable_value(&mut state.tab, Tab::Config, egui::RichText::new("Config").strong());
         ui.selectable_value(&mut state.tab, Tab::Credits, egui::RichText::new("Credits").strong());
     });
@@ -501,7 +497,12 @@ pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState,
     ui.spacing_mut().item_spacing = egui::vec2(10.0, 3.0);
 
     draw_comparison_tab(ui, state, config, pathlog);
-    // draw_paths_tab(ui, state, config, pathlog);
+
+    ui.scope(|ui| {
+        ui.set_enabled(pathlog.is_empty());
+        draw_triggers_tab(ui, state, config, pathlog);
+    });
+
     draw_custom_shapes_tab(ui, state, config);
     draw_config_tab(ui, state, config);
     draw_credits_tab(ui, state);
@@ -683,28 +684,28 @@ fn draw_comparison_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Conf
         });
 }
 
-fn draw_paths_tab(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog) {
-    if state.tab != Tab::Paths { return; }
-    ui.separator();
+// fn draw_paths_tab(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog) {
+//     if state.tab != Tab::Paths { return; }
+//     ui.separator();
 
-    egui::Grid::new("paths_grid")
-    .num_columns(2)
-    .spacing([40.0, 4.0])
-    .striped(true)
-    .show(ui, |ui| {
-        if ui.interact_bg(egui::Sense::click()).clicked() {
-            state.selected_paths.get_mut(&pathlog.direct_paths.id()).unwrap().clear();
-        }
+//     egui::Grid::new("paths_grid")
+//     .num_columns(2)
+//     .spacing([40.0, 4.0])
+//     .striped(true)
+//     .show(ui, |ui| {
+//         if ui.interact_bg(egui::Sense::click()).clicked() {
+//             state.selected_paths.get_mut(&pathlog.direct_paths.id()).unwrap().clear();
+//         }
 
-        for path in pathlog.direct_paths.paths() {
-            draw_path(ui, state, config, pathlog, path, &pathlog.direct_paths);
-        }
-    });
-}
+//         for path in pathlog.direct_paths.paths() {
+//             draw_path(ui, state, config, pathlog, path, &pathlog.direct_paths);
+//         }
+//     });
+// }
 
 fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathlog: &PathLog, path: &Path, collection: &PathCollection) {
-    // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-    // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+    if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
+    if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
 
@@ -795,6 +796,149 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
             }
         }
     });
+
+    ui.end_row();
+}
+
+fn draw_triggers_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, pathlog: &mut PathLog) {
+    if state.tab != Tab::Triggers { return; }
+    ui.separator();
+
+    let mut delete_list: Vec<Uuid> = Vec::new();
+
+    if let Some(collider) = &mut pathlog.main_triggers[0] {
+        draw_trigger(ui, state, collider, &mut delete_list);
+    }
+
+    for trigger in &mut pathlog.checkpoint_triggers {
+        draw_trigger(ui, state, trigger, &mut delete_list);
+    }
+
+    if let Some(collider) = &mut pathlog.main_triggers[1] {
+        draw_trigger(ui, state, collider, &mut delete_list);
+    }
+
+    for id in delete_list {
+        let pos = pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
+        if let Some(i) = pos { pathlog.checkpoint_triggers.remove(i); }
+    }
+
+    egui::Grid::new("util")
+        .num_columns(2)
+        .spacing([40.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+
+                if state.hide_checkpoints {
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    mute_button_text = mute_button_text.strong();
+                }
+
+                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.hide_checkpoints ^= true;
+                }
+
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    state.delete_mode ^= true;
+                }
+                // if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                //     pathlog.checkpoint_triggers.push(BoxCollider::new(pos, rotation, size));
+                // }
+            });
+            ui.end_row();
+        });
+}
+
+fn draw_trigger(ui: &mut egui::Ui, state: &mut UIState, trigger: &mut BoxCollider, delete_list: &mut Vec<Uuid>) {
+    egui::Grid::new(trigger.id().to_string() + "buttons")
+    .num_columns(2)
+    .spacing([40.0, 4.0])
+    .striped(true)
+    .show(ui, |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+            // egui::ComboBox::new(shape.0.id().to_string() + "drop_down", "")
+            // .selected_text(format!("{:?}", shape.0.shape_type))
+            // .show_ui(ui, |ui| {
+            //     ui.selectable_value(&mut shape.0.shape_type, ShapeType::Box, "Box");
+            //     ui.selectable_value(&mut shape.0.shape_type, ShapeType::Sphere, "Sphere");
+            //     ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
+            // });
+
+            ui.label("Checkpoint");
+        });
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+            if state.delete_mode {
+                if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    delete_list.push(trigger.id());
+                }
+            }
+            // ui.color_edit_button_hsva(&mut shape.0.color);
+        });
+        ui.end_row();
+    });
+
+    egui::CollapsingHeader::new("").id_source(trigger.id().to_string() + "collapsing")
+        .show(ui, |ui| {
+            egui::Grid::new(trigger.id().to_string() + "data")
+            .num_columns(2)
+            .spacing([10.0, 4.0])
+            .striped(false)
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    ui.label("Position");
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.add(egui::DragValue::new(&mut trigger.position[2]).speed(0.1));
+                    ui.add(egui::DragValue::new(&mut trigger.position[1]).speed(0.1));
+                    ui.add(egui::DragValue::new(&mut trigger.position[0]).speed(0.1));
+                });
+                ui.end_row();
+
+                let mut rot = trigger.rotation();
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    ui.label("Rotation");
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.add(egui::DragValue::new(&mut rot[2]).speed(0.01).clamp_range(-PI..=PI)).changed() { trigger.set_rotation(rot); };
+                    if ui.add(egui::DragValue::new(&mut rot[1]).speed(0.01).clamp_range(-PI..=PI)).changed() { trigger.set_rotation(rot); };
+                    if ui.add(egui::DragValue::new(&mut rot[0]).speed(0.01).clamp_range(-PI..=PI)).changed() { trigger.set_rotation(rot); };
+                });
+                ui.end_row();
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    ui.label("Size");
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.add(egui::DragValue::new(&mut trigger.size[2]).speed(0.1).clamp_range(0.0..=42069.0));
+                    ui.add(egui::DragValue::new(&mut trigger.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
+                    ui.add(egui::DragValue::new(&mut trigger.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                });
+                ui.end_row();
+            });
+        });
+
+    ui.separator();
+
+    // ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+    //     if state.delete_mode {
+    //         if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+    //             delete_list.push(trigger.id());
+    //         }
+    //     }
+    // });
 
     ui.end_row();
 }
@@ -922,6 +1066,12 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
                 ui.add(Keybind::new(&mut config.spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
             });
             ui.end_row();
+
+            // ui.label("Spawn Checkpoint");
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            //     ui.add(Keybind::new(&mut config.spawn_checkpoint_keybind, "spawn_checkpoint_keybind"));
+            // });
+            // ui.end_row();
         });
 
     ui.add_space(20.0);
@@ -1075,137 +1225,133 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut C
 
     let mut delete_list: Vec<Uuid> = Vec::new();
 
-    // egui::Grid::new("shapes_grid")
-    // .num_columns(2)
-    // .spacing([40.0, 1.0])
-    // .striped(true)
-    // .show(ui, |ui| {
-        for i in 0..state.custom_shapes.len() {
-            let shape = &mut state.custom_shapes[i];
+    for shape in &mut state.custom_shapes {
 
-            //
+        egui::Grid::new(shape.0.id().to_string() + "buttons")
+        .num_columns(2)
+        .spacing([40.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-            egui::Grid::new(shape.0.id.to_string() + "buttons")
-            .num_columns(2)
-            .spacing([40.0, 4.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                    let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
-                    let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+                let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-                    let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+                if shape.1 {
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                    mute_button_text = mute_button_text.strong();
+                }
 
-                    if shape.1 {
-                        ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-                        ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
-                        mute_button_text = mute_button_text.strong();
-                    }
+                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    shape.1 ^= true;
+                }
 
-                    if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                        shape.1 ^= true;
-                    }
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-
-                    egui::ComboBox::new(shape.0.id.to_string() + "drop_down", "")
-                    .selected_text(format!("{:?}", shape.0.shape_type))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Box, "Box");
-                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Sphere, "Sphere");
-                        ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
-                    });
+                egui::ComboBox::new(shape.0.id().to_string() + "drop_down", "")
+                .selected_text(format!("{:?}", shape.0.shape_type))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut shape.0.shape_type, ShapeType::Box, "Box");
+                    ui.selectable_value(&mut shape.0.shape_type, ShapeType::Sphere, "Sphere");
+                    ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
                 });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    ui.color_edit_button_hsva(&mut shape.0.color);
-                });
-                ui.end_row();
             });
 
-            egui::CollapsingHeader::new("").id_source(shape.0.id.to_string() + "collapsing")
-                .show(ui, |ui| {
-                    egui::Grid::new(shape.0.id.to_string() + "paths")
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .striped(false)
-                    .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                            ui.label("Position");
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                            ui.add(egui::DragValue::new(&mut shape.0.position[2]).speed(0.1));
-                            ui.add(egui::DragValue::new(&mut shape.0.position[1]).speed(0.1));
-                            ui.add(egui::DragValue::new(&mut shape.0.position[0]).speed(0.1));
-                        });
-                        ui.end_row();
-
-                        match shape.0.shape_type {
-                            ShapeType::Box => {
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                    ui.label("Rotation");
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[2]).speed(0.01).clamp_range(-PI..=PI));
-                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[1]).speed(0.01).clamp_range(-PI..=PI));
-                                    ui.add(egui::DragValue::new(&mut shape.0.rotation[0]).speed(0.01).clamp_range(-PI..=PI));
-                                });
-                                ui.end_row();
-
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                    ui.label("Size");
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[2]).speed(0.1).clamp_range(0.0..=42069.0));
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
-                                });
-                                ui.end_row();
-                            }
-                            ShapeType::Sphere => {
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                    ui.label("Radius");
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
-                                });
-                                ui.end_row();
-                            }
-                            ShapeType::Cylinder => {
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                    ui.label("Height");
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
-                                });
-                                ui.end_row();
-
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                    ui.label("Radius");
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
-                                });
-                                ui.end_row();
-                            }
-                        }
-                    });
-                });
-
-            ui.separator();
-
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+            //     if state.delete_mode {
+            //         if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+            //             delete_list.push(shape.0.id());
+            //         }
+            //     }
+            // });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if state.delete_mode {
                     if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                        delete_list.push(shape.0.id);
+                        delete_list.push(shape.0.id());
                     }
                 }
+
+                ui.color_edit_button_hsva(&mut shape.0.color);
+            });
+            ui.end_row();
+        });
+
+        egui::CollapsingHeader::new("").id_source(shape.0.id().to_string() + "collapsing")
+            .show(ui, |ui| {
+                egui::Grid::new(shape.0.id().to_string() + "paths")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .striped(false)
+                .show(ui, |ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                        ui.label("Position");
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        ui.add(egui::DragValue::new(&mut shape.0.position[2]).speed(0.1));
+                        ui.add(egui::DragValue::new(&mut shape.0.position[1]).speed(0.1));
+                        ui.add(egui::DragValue::new(&mut shape.0.position[0]).speed(0.1));
+                    });
+                    ui.end_row();
+
+                    match shape.0.shape_type {
+                        ShapeType::Box => {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                ui.label("Rotation");
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.add(egui::DragValue::new(&mut shape.0.rotation[2]).speed(0.01).clamp_range(-PI..=PI));
+                                ui.add(egui::DragValue::new(&mut shape.0.rotation[1]).speed(0.01).clamp_range(-PI..=PI));
+                                ui.add(egui::DragValue::new(&mut shape.0.rotation[0]).speed(0.01).clamp_range(-PI..=PI));
+                            });
+                            ui.end_row();
+
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                ui.label("Size");
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.add(egui::DragValue::new(&mut shape.0.size[2]).speed(0.1).clamp_range(0.0..=42069.0));
+                                ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
+                                ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                            });
+                            ui.end_row();
+                        }
+                        ShapeType::Sphere => {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                ui.label("Radius");
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                            });
+                            ui.end_row();
+                        }
+                        ShapeType::Cylinder => {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                ui.label("Height");
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.add(egui::DragValue::new(&mut shape.0.size[1]).speed(0.1).clamp_range(0.0..=42069.0));
+                            });
+                            ui.end_row();
+
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                ui.label("Radius");
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.add(egui::DragValue::new(&mut shape.0.size[0]).speed(0.1).clamp_range(0.0..=42069.0));
+                            });
+                            ui.end_row();
+                        }
+                    }
+                });
             });
 
-            ui.end_row();
-        }
-    // });
+        ui.separator();
+
+        ui.end_row();
+    }
 
     for id in delete_list {
         let pos = state.custom_shapes.iter().position(|s| s.0.id == id);
@@ -1217,7 +1363,7 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut C
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |_ui| {
 
             });
 
