@@ -1,14 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time;
 use std::vec::Vec;
 
-use tracing::*;
+use tracing::{error, info};
 
 use glam::{Vec3, Mat3};
 use uuid::Uuid;
 
 use crate::error::Error;
-use crate::pathdata::*;
+use crate::{pathdata::*, RenderUpdates};
 
 pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
 
@@ -35,7 +35,7 @@ pub struct PathLog {
 }
 
 impl PathLog {
-    pub fn new() -> PathLog {
+    pub fn init() -> PathLog {
         let pathlog = PathLog {
             paused: false,
             primed: false,
@@ -69,7 +69,7 @@ impl PathLog {
         pathlog
     }
 
-	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3]) {
+	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3], updates: &mut RenderUpdates) {
         let player_up = Mat3::from_euler(glam::EulerRot::XYZ, player_rot[0], player_rot[1], player_rot[2]) * Vec3::Y;
         let player_center = [
             player_pos[0] + player_up.x,
@@ -94,6 +94,7 @@ impl PathLog {
 
             if player_in_trigger[1] && self.recording {
                 self.stop();
+                updates.paths = true;
             }
         }
 
@@ -121,14 +122,33 @@ impl PathLog {
     }
 
     pub fn pause(&mut self) {
-        if !self.recording { return; }
+        if !self.recording || self.paused { return; }
+
         let segment_time = self.recording_start.unwrap().elapsed().as_millis() as u64;
         self.recording_path.end_segment(segment_time);
+
         self.paused = true;
+        info!("Recording paused");
     }
 
     pub fn unpause(&mut self) {
+        if !self.recording || !self.paused { return; }
+
+        self.recording_start = Some(time::Instant::now());
+
         self.paused = false;
+        info!("Recording unpaused");
+        // let p : Option<i32> = None;
+        // let _a = p.unwrap();
+    }
+
+    pub fn toggle_pause(&mut self) {
+        if self.paused {
+            self.unpause();
+        }
+        else {
+            self.pause();
+        }
     }
 
 	pub fn stop(&mut self) {
@@ -138,7 +158,7 @@ impl PathLog {
 
         let time_recorded = self.recording_start.unwrap().elapsed().as_millis() as u64;
         self.recording_path.end_path(time_recorded);
-        self.latest_time = time_recorded;
+        self.latest_time = self.recording_path.time();
 
         if self.direct {
             // self.direct_paths.add(self.recording_path.clone(), None);
@@ -172,7 +192,11 @@ impl PathLog {
 
     pub fn time(&self) -> u64 {
         if let Some(rec_start) = self.recording_start {
-            rec_start.elapsed().as_millis() as u64
+            let mut current_time : u64 = 0;
+            if !self.paused {
+                current_time = rec_start.elapsed().as_millis() as u64;
+            }
+            current_time + self.recording_path.time()
         } else { self.latest_time }
     }
 

@@ -3,6 +3,7 @@
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::collections::VecDeque;
 use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
@@ -47,7 +48,6 @@ use pintar::Pintar;
 
 // static TICKRATE : u32 = 60;
 
-
 static mut GLOBAL_STATE : Option<GlobalState> = None;
 static mut DEBUG_STATE : Option<DebugState> = None;
 
@@ -89,18 +89,36 @@ static KEYBOARD_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = 
     }
   });
 
+// enum GlobalEvent {
+//     CollectionUpdate,
+//     TriggersUpdate,
+//     TeleportsUpdate,
+//     ShapesUpdate,
+// }
+
+struct RenderUpdates {
+    paths: bool,
+    triggers: bool,
+    teleports: bool,
+    shapes: bool,
+}
+
 struct GlobalState {
     pathlog: PathLog,
     config: ConfigState,
     egui: UIState,
+    updates: RenderUpdates,
+    // events: VecDeque<GlobalEvent>,
 }
 
 impl GlobalState {
-    pub fn new() -> GlobalState {
+    pub fn init() -> GlobalState {
         GlobalState {
-            pathlog: PathLog::new(),
+            pathlog: PathLog::init(),
             config: ConfigState::init(),
-            egui: UIState::new(),
+            egui: UIState::init(),
+            updates: RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false }
+            // events: VecDeque::new(),
         }
     }
 }
@@ -165,143 +183,145 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             let state = &mut GLOBAL_STATE.as_mut().unwrap().egui;
             let pathlog = &mut GLOBAL_STATE.as_mut().unwrap().pathlog;
             let config = &GLOBAL_STATE.as_mut().unwrap().config;
+            let updates = &mut GLOBAL_STATE.as_mut().unwrap().updates;
+            // let events = &mut GLOBAL_STATE.as_mut().unwrap().events;
 
-            // if gamedata::get_is_loading() {
-            //     pathlog.pause();
-            // } else {
-            //     pathlog.unpause();
-            // }
+            if gamedata::get_is_loading() {
+                pathlog.pause();
+            } else {
+                pathlog.unpause();
+            }
 
-            pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
+            pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation(), updates);
 
             pintar.set_default_view_proj(gamedata::get_view_matrix());
 
-            // debug
-            // pintar.add_gs_line([0., 0., 0.], gamedata::get_player_position(), [1., 0., 1., 1.], 0.5);
+            render_path(pintar, &pathlog.recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
 
-            render_path(&pathlog.recording_path, pintar, [1.0, 1.0, 1.0, 0.8], 0.02);
+            render_custom_shapes(pintar, state);
 
-            for shape in &state.custom_shapes {
-                if shape.1 { continue; }
-                match shape.0.shape_type {
-                    ShapeType::Box => {
-                        pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
-                            .scale(shape.0.size)
-                            .rotate(shape.0.rotation)
-                            .translate(shape.0.position));
-                    }
-                    ShapeType::Sphere => {
-                        let mut size = shape.0.size;
-                        size[1] = size[0];
-                        size[2] = size[0];
-                        pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
-                            .scale(size)
-                            .translate(shape.0.position));
-                    }
-                    ShapeType::Cylinder => {
-                        let mut size = shape.0.size;
-                        size[2] = size[0];
-                        pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
-                            .scale(size)
-                            .translate(shape.0.position));
-                    }
-                }
+            // for shape in &state.custom_shapes {
+            //     if shape.1 { continue; }
+            //     match shape.0.shape_type {
+            //         ShapeType::Box => {
+            //             pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
+            //                 .scale(shape.0.size)
+            //                 .rotate(shape.0.rotation)
+            //                 .translate(shape.0.position));
+            //         }
+            //         ShapeType::Sphere => {
+            //             let mut size = shape.0.size;
+            //             size[1] = size[0];
+            //             size[2] = size[0];
+            //             pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
+            //                 .scale(size)
+            //                 .translate(shape.0.position));
+            //         }
+            //         ShapeType::Cylinder => {
+            //             let mut size = shape.0.size;
+            //             size[2] = size[0];
+            //             pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
+            //                 .scale(size)
+            //                 .translate(shape.0.position));
+            //         }
+            //     }
+            // }
+
+            render_teleports(pintar, state, config);
+
+            // if let Some(teleport) = &state.teleports[0] {
+            //     let pos = teleport.location;
+            //     let mut color = config.trigger_color[0];
+            //     // color[3] = 0.5;
+            //     // pos[1] += 1.0;
+            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+            //     color[3] *= 0.25;
+            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+            // }
+
+            // if let Some(teleport) = &state.teleports[1] {
+            //     let pos = teleport.location;
+            //     let mut color = config.trigger_color[1];
+            //     // color[3] = 0.5;
+            //     // pos[1] += 1.0;
+            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+            //     color[3] *= 0.25;
+            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+            // }
+
+
+            // TODO: problem: need more control over clearing vertex groups
+            if updates.paths {
+                render_all_paths(pintar, state, config, pathlog);
+                updates.paths = false;
             }
 
-            if let Some(teleport) = &state.teleports[0] {
-                let pos = teleport.location;
-                let mut color = config.trigger_color[0];
-                // color[3] = 0.5;
-                // pos[1] += 1.0;
-                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-                color[3] *= 0.25;
-                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
-            }
+            // let mut visible_collection = PathCollection::new("Visible".to_string());
+            // let mut selected : Vec<Uuid> = Vec::new();
 
-            if let Some(teleport) = &state.teleports[1] {
-                let pos = teleport.location;
-                let mut color = config.trigger_color[1];
-                // color[3] = 0.5;
-                // pos[1] += 1.0;
-                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-                color[3] *= 0.25;
-                pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
-            }
+            // for collection in &pathlog.path_collections {
+            //     let mut visible = true;
+            //     for v in state.solo_collections.values() {
+            //         if *v {visible = false;}
+            //     }
 
-            let mut visible_collection = PathCollection::new("Visible".to_string());
-            let mut selected : Vec<Uuid> = Vec::new();
+            //     if !visible { continue; }
 
-            for collection in &pathlog.path_collections {
-                // if !state.solo_collections.contains_key(&collection.id()) { state.solo_collections.insert(collection.id(), false); }
-                // if !state.mute_collections.contains_key(&collection.id()) { state.mute_collections.insert(collection.id(), false); }
-                // if !state.selected_paths.contains_key(&collection.id()) { state.selected_paths.insert(collection.id(), Vec::new()); }
+            //     for path in collection.paths() {
+            //         if visible_collection.paths().contains(path) { continue; }
 
-                let mut visible = true;
-                for v in state.solo_collections.values() {
-                    if *v {visible = false;}
-                }
-                // if state.solo_collections.get(&collection.id()) == Some(&true) { visible = true; }
-                // if state.mute_collections.get(&collection.id()) == Some(&true) { visible = false; }
-                if !visible { continue; }
+            //         visible_collection.add(path.clone(), None);
 
-                for path in collection.paths() {
-                    if visible_collection.paths().contains(path) { continue; }
+            //         if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
+            //             selected.push(path.id());
+            //         }
+            //     }
+            // }
 
-                    visible_collection.add(path.clone(), None);
+            // let visible_paths = visible_collection.paths();
+            // for i in 0..visible_paths.len() {
+            //     let path = &visible_paths[i];
 
-                    if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
-                        selected.push(path.id());
-                    }
-                }
-            }
+            //     let mut visible = true;
+            //     for v in state.solo_paths.values() {
+            //         if *v {visible = false;}
+            //     }
+            //     if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
+            //     if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
+            //     if !visible { continue; }
 
-            let visible_paths = visible_collection.paths();
-            for i in 0..visible_paths.len() {
-                let path = &visible_paths[i];
+            //     let fast = config.fast_color;
+            //     let slow = config.slow_color;
+            //     let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
+            //     let mut color: [f32; 4];
+            //     let thick: f32;
 
-                // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-                // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
+            //     if i == 0 {
+            //         color = config.gold_color;
+            //         thick = 0.04;
+            //     }
+            //     else if visible_paths.len() == 2 {
+            //         color = config.slow_color;
+            //         thick = 0.02;
+            //     }
+            //     else {
+            //         let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
 
-                let mut visible = true;
-                for v in state.solo_paths.values() {
-                    if *v {visible = false;}
-                }
-                if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-                if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
-                if !visible { continue; }
+            //         color = [
+            //             lerp(fast[0], slow[0], p),
+            //             lerp(fast[1], slow[1], p),
+            //             lerp(fast[2], slow[2], p),
+            //             lerp(fast[3], slow[3], p),
+            //         ];
+            //         thick = 0.02;
+            //     }
 
-                let fast = config.fast_color;
-                let slow = config.slow_color;
-                let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
-                let mut color: [f32; 4];
-                let thick: f32;
+            //     if selected.contains(&path.id()) {
+            //         color = config.select_color;
+            //     }
 
-                if i == 0 {
-                    color = config.gold_color;
-                    thick = 0.04;
-                }
-                else if visible_paths.len() == 2 {
-                    color = config.slow_color;
-                    thick = 0.02;
-                }
-                else {
-                    let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
-
-                    color = [
-                        lerp(fast[0], slow[0], p),
-                        lerp(fast[1], slow[1], p),
-                        lerp(fast[2], slow[2], p),
-                        lerp(fast[3], slow[3], p),
-                    ];
-                    thick = 0.02;
-                }
-
-                if selected.contains(&path.id()) {
-                    color = config.select_color;
-                }
-
-                render_path(&path, pintar, color, thick);
-            }
+            //     render_path(pintar, &path, color, thick);
+            // }
 
             // for path in pathlog.direct_paths.paths() {
             //     // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
@@ -317,15 +337,17 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             //     render_path(&path, pintar, [1.0, 1.0, 1.0, 1.0], 0.02);
             // }
 
-            for collider in &pathlog.checkpoint_triggers {
-                pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-            }
+            render_triggers(pintar, config, pathlog);
 
-            for i in 0..2 {
-                if let Some(collider) = pathlog.main_triggers[i] {
-                    pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-                }
-            }
+            // for collider in &pathlog.checkpoint_triggers {
+            //     pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+            // }
+
+            // for i in 0..2 {
+            //     if let Some(collider) = pathlog.main_triggers[i] {
+            //         pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+            //     }
+            // }
 
             pintar.render();
             pintar.clear_vertex_groups();
@@ -430,19 +452,151 @@ extern "system" fn hk_om_set_render_targets(
     ocular::get_om_set_render_targets().expect("Uh oh. OMSetRenderTargets isn't hooked?!").call(context, num_views, render_target_views, depth_stencil_view)
 }
 
-fn render_path(path: &Path, pintar: &mut Pintar, color: [f32; 4], thickness: f32) {
+fn render_path(pintar: &mut Pintar, path: &Path, color: [f32; 4], thickness: f32) {
     for segment in path.segments() {
         if segment.len() < 2 { continue; }
         pintar.add_line(segment, color, thickness);
     }
 }
 
+fn render_all_paths(pintar: &mut Pintar, state: &UIState, config: &ConfigState, pathlog: &PathLog) {
+    let mut visible_collection = PathCollection::new("Visible".to_string());
+    let mut selected : Vec<Uuid> = Vec::new();
+
+    for collection in &pathlog.path_collections {
+        let mut visible = true;
+        for v in state.solo_collections.values() {
+            if *v {visible = false;}
+        }
+
+        if !visible { continue; }
+
+        for path in collection.paths() {
+            if visible_collection.paths().contains(path) { continue; }
+
+            visible_collection.add(path.clone(), None);
+
+            if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
+                selected.push(path.id());
+            }
+        }
+    }
+
+    let visible_paths = visible_collection.paths();
+    for i in 0..visible_paths.len() {
+        let path = &visible_paths[i];
+
+        let mut visible = true;
+        for v in state.solo_paths.values() {
+            if *v {visible = false;}
+        }
+        if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
+        if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
+        if !visible { continue; }
+
+        let fast = config.fast_color;
+        let slow = config.slow_color;
+        let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
+        let mut color: [f32; 4];
+        let thick: f32;
+
+        if i == 0 {
+            color = config.gold_color;
+            thick = 0.04;
+        }
+        else if visible_paths.len() == 2 {
+            color = config.slow_color;
+            thick = 0.02;
+        }
+        else {
+            let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
+
+            color = [
+                lerp(fast[0], slow[0], p),
+                lerp(fast[1], slow[1], p),
+                lerp(fast[2], slow[2], p),
+                lerp(fast[3], slow[3], p),
+            ];
+            thick = 0.02;
+        }
+
+        if selected.contains(&path.id()) {
+            color = config.select_color;
+        }
+
+        render_path(pintar, &path, color, thick);
+    }
+}
+
+fn render_triggers(pintar: &mut Pintar, config: &ConfigState, pathlog: &PathLog) {
+    for collider in &pathlog.checkpoint_triggers {
+        pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+    }
+
+    for i in 0..2 {
+        if let Some(collider) = pathlog.main_triggers[i] {
+            pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+        }
+    }
+}
+
+fn render_teleports(pintar: &mut Pintar, state: &UIState, config: &ConfigState) {
+    if let Some(teleport) = &state.teleports[0] {
+        let pos = teleport.location;
+        let mut color = config.trigger_color[0];
+        // color[3] = 0.5;
+        // pos[1] += 1.0;
+        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+        color[3] *= 0.25;
+        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+    }
+
+    if let Some(teleport) = &state.teleports[1] {
+        let pos = teleport.location;
+        let mut color = config.trigger_color[1];
+        // color[3] = 0.5;
+        // pos[1] += 1.0;
+        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+        color[3] *= 0.25;
+        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+    }
+}
+
+fn render_custom_shapes(pintar: &mut Pintar, state: &UIState) {
+    for shape in &state.custom_shapes {
+        if shape.1 { continue; }
+        match shape.0.shape_type {
+            ShapeType::Box => {
+                pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
+                    .scale(shape.0.size)
+                    .rotate(shape.0.rotation)
+                    .translate(shape.0.position));
+            }
+            ShapeType::Sphere => {
+                let mut size = shape.0.size;
+                size[1] = size[0];
+                size[2] = size[0];
+                pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
+                    .scale(size)
+                    .translate(shape.0.position));
+            }
+            ShapeType::Cylinder => {
+                let mut size = shape.0.size;
+                size[2] = size[0];
+                pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
+                    .scale(size)
+                    .translate(shape.0.position));
+            }
+        }
+    }
+}
+
 fn draw_debug(ui: &mut egui::Ui) {
     unsafe {
-        let debug = DEBUG_STATE.as_ref().unwrap();
+        let _debug = DEBUG_STATE.as_ref().unwrap();
 
         ui.add(egui::Label::new(
-            RichText::new(format!("{:.2?}", debug.average_player_speed))
+            RichText::new(format!("{:?}", gamedata::get_is_loading()))
         ).selectable(false));
     }
 }
@@ -564,7 +718,7 @@ fn main() {
     log_setup();
 
     unsafe {
-        GLOBAL_STATE = Some(GlobalState::new());
+        GLOBAL_STATE = Some(GlobalState::init());
         let mut debug = DebugState{
             frame_time: 0,
             copy_time: 0,

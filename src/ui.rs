@@ -136,14 +136,14 @@ pub struct UIState {
     pub solo_paths: HashMap<Uuid, bool>,
     pub mute_collections: HashMap<Uuid, bool>,
     pub solo_collections: HashMap<Uuid, bool>,
-    pub teleports:[ Option<Teleport>; 2],
+    pub teleports: [ Option<Teleport>; 2 ],
     pub hide_checkpoints: bool,
 
     pub custom_shapes: Vec<(Shape, bool)>,
 }
 
 impl UIState {
-    pub fn new() -> UIState {
+    pub fn init() -> UIState {
         let state = UIState {
             events: VecDeque::new(),
             file_path_rx: None,
@@ -185,11 +185,7 @@ impl UIState {
                     pathlog.set_autoreset(new);
                 }
                 UIEvent::SpawnTrigger { index, position, rotation, size } => {
-                    // let mut empty = true;
-                    // for collection in &pathlog.path_collections {
-                    //     empty &= collection.paths().is_empty();
-                    // }
-                    if pathlog.is_empty() {
+                     if pathlog.is_empty() {
                         pathlog.create_trigger(index, position, rotation, size);
                         self.events.push_back(UIEvent::SpawnTeleport { index });
                     }
@@ -800,7 +796,7 @@ fn draw_path(ui: &mut egui::Ui, state: &mut UIState, config: &ConfigState, pathl
     ui.end_row();
 }
 
-fn draw_triggers_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, pathlog: &mut PathLog) {
+fn draw_triggers_tab(ui: &mut egui::Ui, state: &mut UIState, _config: &mut ConfigState, pathlog: &mut PathLog) {
     if state.tab != Tab::Triggers { return; }
     ui.separator();
 
@@ -828,24 +824,24 @@ fn draw_triggers_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut Config
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
-                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |_ui| {
+                // let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                // let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-                let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+                // let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-                if state.hide_checkpoints {
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
-                    mute_button_text = mute_button_text.strong();
-                }
+                // if state.hide_checkpoints {
+                //     ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
+                //     ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
+                //     mute_button_text = mute_button_text.strong();
+                // }
 
-                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    state.hide_checkpoints ^= true;
-                }
+                // if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                //     state.hide_checkpoints ^= true;
+                // }
 
-                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                // ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                // ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {

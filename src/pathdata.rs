@@ -16,61 +16,6 @@ pub struct OldPath {
     nodes: Vec<[f32; 3]>,
 }
 
-// impl Path {
-//     pub fn new() -> Path {
-//         Path {
-//             id: Uuid::new_v4(),
-//             time: 0,
-//             nodes: Vec::new(),
-//         }
-//     }
-
-//     pub fn len(&self) -> usize {
-//         self.nodes.len()
-//     }
-
-//     pub fn id(&self) -> Uuid {
-//         self.id
-//     }
-
-//     pub fn get_node(&self, index: usize) -> [f32; 3] {
-//         self.nodes[index]
-//     }
-
-//     pub fn nodes(&self) -> Vec<[f32; 3]> {
-//         self.nodes.clone()
-//     }
-
-//     pub fn set_time(&mut self, new_time: u64) {
-//         self.time = new_time;
-//     }
-
-//     pub fn time(&self) -> u64 {
-//         self.time
-//     }
-
-//     pub fn add_node(&mut self, pos: [f32; 3]) {
-//         self.nodes.push(pos);
-//     }
-
-//     // pub fn remove_node(&mut self, ) {} ?
-
-//     pub fn clear_nodes(&mut self) {
-//         self.nodes.clear();
-//     }
-
-//     pub fn from_file(file_path: String) -> Path {
-//         let file_content = fs::read(file_path).expect("[Celestial][PathLog] Error: failed to read path file!");
-//         serde_binary::from_vec(file_content, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to decode path file!")
-//     }
-
-// 	pub fn to_file(&mut self, file_path: String) {
-//         fs::write(
-//             file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize path file!")
-//         ).expect("[Celestial][PathLog] Error: failed to write path file!");
-//     }
-// }
-
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
 pub struct Path {
