@@ -13,7 +13,7 @@ use tracing::error;
 use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathlog::PathLog;
 use crate::pathdata::{BoxCollider, HighPassFilter, Path, PathCollection};
-use crate::gamedata;
+use crate::{gamedata, RenderUpdates};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
@@ -165,7 +165,7 @@ impl UIState {
         state
     }
 
-    pub unsafe fn process_events(&mut self, pathlog: &mut PathLog) {
+    pub unsafe fn process_events(&mut self, pathlog: &mut PathLog, updates: &mut RenderUpdates) {
         let mut loop_events : VecDeque<UIEvent> = VecDeque::new();
 
         while let Some(event) = self.events.pop_front() {
@@ -174,6 +174,7 @@ impl UIState {
                     self.mute_paths.remove(&path_id);
                     self.solo_paths.remove(&path_id);
                     pathlog.remove(path_id, collection_id);
+                    updates.paths = true;
                 }
                 UIEvent::ChangeDirectMode { new } => {
                     pathlog.set_direct_mode(new);
@@ -200,6 +201,7 @@ impl UIState {
                     self.mute_paths.insert(pathlog.recording_path.id(), false);
                     self.solo_paths.insert(pathlog.recording_path.id(), false);
                     pathlog.stop();
+                    updates.paths = true;
                 }
                 UIEvent::ResetRecording => {
                     pathlog.reset();
@@ -233,6 +235,7 @@ impl UIState {
                         self.mute_collections.remove(&id);
                         self.solo_collections.remove(&id);
                         pathlog.path_collections.remove(index);
+                        updates.paths = true;
                     }
                 }
                 UIEvent::ToggleActive { id } => {
@@ -342,6 +345,7 @@ impl UIState {
                                 }
                             }
                             self.file_path_rx = None;
+                            updates.paths = true;
                         }
                         else { loop_events.push_back(UIEvent::LoadComparison); }
                     }
@@ -372,6 +376,7 @@ impl UIState {
                             selected.push(path.id());
                         }
                     }
+                    updates.paths = true;
                 }
                 UIEvent::Teleport { index } => {
                     if let Some(teleport) = &self.teleports[index] {

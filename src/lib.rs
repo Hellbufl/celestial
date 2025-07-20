@@ -3,7 +3,6 @@
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::time::Instant;
-use std::collections::VecDeque;
 use glam::Vec3;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
@@ -20,6 +19,8 @@ use windows::core::ComInterface;
 use windows::core::Interface;
 use retour::GenericDetour;
 use once_cell::sync::Lazy;
+
+use directx_math::XMMatrix;
 
 use tracing::*;
 use tracing_subscriber::prelude::*;
@@ -47,6 +48,10 @@ use ocular;
 use pintar::Pintar;
 
 // static TICKRATE : u32 = 60;
+static RECORDING_GROUP : &str = "recording";
+static TRIGGERS_GROUP : &str = "triggers";
+static TELEPORTS_GROUP : &str = "teleports";
+static SHAPES_GROUP : &str = "custom_shapes";
 
 static mut GLOBAL_STATE : Option<GlobalState> = None;
 static mut DEBUG_STATE : Option<DebugState> = None;
@@ -96,7 +101,7 @@ static KEYBOARD_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = 
 //     ShapesUpdate,
 // }
 
-struct RenderUpdates {
+pub struct RenderUpdates {
     paths: bool,
     triggers: bool,
     teleports: bool,
@@ -140,11 +145,21 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
     let _ = this.GetDesc(&mut sd);
 
     if PINTAR.is_none() {
-        PINTAR = Some(Pintar::new(&this, 0));
+        let mut pintar = Pintar::new(&this, 0);
+        // pintar.add_line_vertex_group("paths".to_string());
+        pintar.add_default_vertex_group(TRIGGERS_GROUP.to_string());
+        pintar.add_default_vertex_group(TELEPORTS_GROUP.to_string());
+        pintar.add_default_vertex_group(SHAPES_GROUP.to_string());
+        PINTAR = Some(pintar);
     }
 
     if EGUI_RENDERER.is_none() {
-        EGUI_RENDERER = Some(DirectX11Renderer::init_from_swapchain(&this, egui::Context::default()).unwrap()); // TODO: check for errors maybe?
+        match DirectX11Renderer::init_from_swapchain(&this, egui::Context::default()) {
+            Ok(renderer) => {
+                EGUI_RENDERER = Some(renderer);
+            },
+            Err(e) => error!("{e}")
+        }
     }
 
     if INPUT_MANAGER.is_none() {
@@ -194,10 +209,22 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
             pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation(), updates);
 
-            pintar.set_default_view_proj(gamedata::get_view_matrix());
+            let view_proj = gamedata::get_view_matrix();
+
+            pintar.set_default_view_proj(view_proj);
+
+            let triggers_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::DefaultVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(TRIGGERS_GROUP.to_string()).unwrap();
+            triggers_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
+
+            let teleports_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::DefaultVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(TELEPORTS_GROUP.to_string()).unwrap();
+            teleports_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
+
+            let shapes_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::DefaultVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(SHAPES_GROUP.to_string()).unwrap();
+            shapes_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
 
             render_path(pintar, &pathlog.recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
 
+            pintar.clear_vertex_group(SHAPES_GROUP.to_string());
             render_custom_shapes(pintar, state);
 
             // for shape in &state.custom_shapes {
@@ -227,6 +254,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             //     }
             // }
 
+            pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
             render_teleports(pintar, state, config);
 
             // if let Some(teleport) = &state.teleports[0] {
@@ -249,9 +277,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
             // }
 
-
-            // TODO: problem: need more control over clearing vertex groups
             if updates.paths {
+                pintar.clear_vertex_group("default_line".to_string());
                 render_all_paths(pintar, state, config, pathlog);
                 updates.paths = false;
             }
@@ -337,6 +364,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             //     render_path(&path, pintar, [1.0, 1.0, 1.0, 1.0], 0.02);
             // }
 
+            pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
             render_triggers(pintar, config, pathlog);
 
             // for collider in &pathlog.checkpoint_triggers {
@@ -350,7 +378,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             // }
 
             pintar.render();
-            pintar.clear_vertex_groups();
+            // pintar.clear_all_vertex_groups();
         }
 
         if let Some(dx_renderer) = EGUI_RENDERER.as_mut() {
@@ -396,7 +424,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                     })
                 .expect("successful render");
 
-            global_state.egui.process_events(&mut global_state.pathlog);
+            global_state.egui.process_events(&mut global_state.pathlog, &mut global_state.updates);
         }
 
         DEBUG_STATE.as_mut().unwrap().frame_time = frame_start.elapsed().as_micros() as u64;
@@ -455,7 +483,7 @@ extern "system" fn hk_om_set_render_targets(
 fn render_path(pintar: &mut Pintar, path: &Path, color: [f32; 4], thickness: f32) {
     for segment in path.segments() {
         if segment.len() < 2 { continue; }
-        pintar.add_line(segment, color, thickness);
+        pintar.add_line("default_line".to_string(), segment, color, thickness);
     }
 }
 
@@ -530,12 +558,12 @@ fn render_all_paths(pintar: &mut Pintar, state: &UIState, config: &ConfigState, 
 
 fn render_triggers(pintar: &mut Pintar, config: &ConfigState, pathlog: &PathLog) {
     for collider in &pathlog.checkpoint_triggers {
-        pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+        pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
     }
 
     for i in 0..2 {
         if let Some(collider) = pathlog.main_triggers[i] {
-            pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+            pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
         }
     }
 }
@@ -546,9 +574,9 @@ fn render_teleports(pintar: &mut Pintar, state: &UIState, config: &ConfigState) 
         let mut color = config.trigger_color[0];
         // color[3] = 0.5;
         // pos[1] += 1.0;
-        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
         color[3] *= 0.25;
-        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
     }
 
     if let Some(teleport) = &state.teleports[1] {
@@ -556,9 +584,9 @@ fn render_teleports(pintar: &mut Pintar, state: &UIState, config: &ConfigState) 
         let mut color = config.trigger_color[1];
         // color[3] = 0.5;
         // pos[1] += 1.0;
-        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
         color[3] *= 0.25;
-        pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
+        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
     }
 }
 
@@ -567,7 +595,7 @@ fn render_custom_shapes(pintar: &mut Pintar, state: &UIState) {
         if shape.1 { continue; }
         match shape.0.shape_type {
             ShapeType::Box => {
-                pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
+                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
                     .scale(shape.0.size)
                     .rotate(shape.0.rotation)
                     .translate(shape.0.position));
@@ -576,14 +604,14 @@ fn render_custom_shapes(pintar: &mut Pintar, state: &UIState) {
                 let mut size = shape.0.size;
                 size[1] = size[0];
                 size[2] = size[0];
-                pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
+                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
                     .scale(size)
                     .translate(shape.0.position));
             }
             ShapeType::Cylinder => {
                 let mut size = shape.0.size;
                 size[2] = size[0];
-                pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
+                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
                     .scale(size)
                     .translate(shape.0.position));
             }
