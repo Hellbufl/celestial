@@ -94,13 +94,6 @@ static KEYBOARD_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = 
     }
   });
 
-// enum GlobalEvent {
-//     CollectionUpdate,
-//     TriggersUpdate,
-//     TeleportsUpdate,
-//     ShapesUpdate,
-// }
-
 pub struct RenderUpdates {
     paths: bool,
     triggers: bool,
@@ -113,7 +106,6 @@ struct GlobalState {
     config: ConfigState,
     egui: UIState,
     updates: RenderUpdates,
-    // events: VecDeque<GlobalEvent>,
 }
 
 impl GlobalState {
@@ -123,7 +115,6 @@ impl GlobalState {
             config: ConfigState::init(),
             egui: UIState::init(),
             updates: RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false }
-            // events: VecDeque::new(),
         }
     }
 }
@@ -192,13 +183,15 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
         debug.last_frame = Instant::now();
         debug.frame_count += 1;
 
+        let mut global_state = GLOBAL_STATE.as_mut().unwrap();
+
         if let Some(pintar) = PINTAR.as_mut() {
             DEBUG_STATE.as_mut().unwrap().copy_time = 0;
 
-            let state = &mut GLOBAL_STATE.as_mut().unwrap().egui;
-            let pathlog = &mut GLOBAL_STATE.as_mut().unwrap().pathlog;
-            let config = &GLOBAL_STATE.as_mut().unwrap().config;
-            let updates = &mut GLOBAL_STATE.as_mut().unwrap().updates;
+            let state = &mut global_state.egui;
+            let pathlog = &mut global_state.pathlog;
+            let config = &global_state.config;
+            let updates = &mut global_state.updates;
             // let events = &mut GLOBAL_STATE.as_mut().unwrap().events;
 
             if gamedata::get_is_loading() {
@@ -227,55 +220,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             pintar.clear_vertex_group(SHAPES_GROUP.to_string());
             render_custom_shapes(pintar, state);
 
-            // for shape in &state.custom_shapes {
-            //     if shape.1 { continue; }
-            //     match shape.0.shape_type {
-            //         ShapeType::Box => {
-            //             pintar.add_default_mesh(pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
-            //                 .scale(shape.0.size)
-            //                 .rotate(shape.0.rotation)
-            //                 .translate(shape.0.position));
-            //         }
-            //         ShapeType::Sphere => {
-            //             let mut size = shape.0.size;
-            //             size[1] = size[0];
-            //             size[2] = size[0];
-            //             pintar.add_default_mesh(pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
-            //                 .scale(size)
-            //                 .translate(shape.0.position));
-            //         }
-            //         ShapeType::Cylinder => {
-            //             let mut size = shape.0.size;
-            //             size[2] = size[0];
-            //             pintar.add_default_mesh(pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
-            //                 .scale(size)
-            //                 .translate(shape.0.position));
-            //         }
-            //     }
-            // }
-
             pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
             render_teleports(pintar, state, config);
-
-            // if let Some(teleport) = &state.teleports[0] {
-            //     let pos = teleport.location;
-            //     let mut color = config.trigger_color[0];
-            //     // color[3] = 0.5;
-            //     // pos[1] += 1.0;
-            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-            //     color[3] *= 0.25;
-            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
-            // }
-
-            // if let Some(teleport) = &state.teleports[1] {
-            //     let pos = teleport.location;
-            //     let mut color = config.trigger_color[1];
-            //     // color[3] = 0.5;
-            //     // pos[1] += 1.0;
-            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-            //     color[3] *= 0.25;
-            //     pintar.add_default_mesh(pintar::primitives::cylinder::new(color).scale([0.5, 0.051, 0.5]).translate(pos));
-            // }
 
             if updates.paths {
                 pintar.clear_vertex_group("default_line".to_string());
@@ -283,99 +229,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 updates.paths = false;
             }
 
-            // let mut visible_collection = PathCollection::new("Visible".to_string());
-            // let mut selected : Vec<Uuid> = Vec::new();
-
-            // for collection in &pathlog.path_collections {
-            //     let mut visible = true;
-            //     for v in state.solo_collections.values() {
-            //         if *v {visible = false;}
-            //     }
-
-            //     if !visible { continue; }
-
-            //     for path in collection.paths() {
-            //         if visible_collection.paths().contains(path) { continue; }
-
-            //         visible_collection.add(path.clone(), None);
-
-            //         if state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
-            //             selected.push(path.id());
-            //         }
-            //     }
-            // }
-
-            // let visible_paths = visible_collection.paths();
-            // for i in 0..visible_paths.len() {
-            //     let path = &visible_paths[i];
-
-            //     let mut visible = true;
-            //     for v in state.solo_paths.values() {
-            //         if *v {visible = false;}
-            //     }
-            //     if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-            //     if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
-            //     if !visible { continue; }
-
-            //     let fast = config.fast_color;
-            //     let slow = config.slow_color;
-            //     let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
-            //     let mut color: [f32; 4];
-            //     let thick: f32;
-
-            //     if i == 0 {
-            //         color = config.gold_color;
-            //         thick = 0.04;
-            //     }
-            //     else if visible_paths.len() == 2 {
-            //         color = config.slow_color;
-            //         thick = 0.02;
-            //     }
-            //     else {
-            //         let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
-
-            //         color = [
-            //             lerp(fast[0], slow[0], p),
-            //             lerp(fast[1], slow[1], p),
-            //             lerp(fast[2], slow[2], p),
-            //             lerp(fast[3], slow[3], p),
-            //         ];
-            //         thick = 0.02;
-            //     }
-
-            //     if selected.contains(&path.id()) {
-            //         color = config.select_color;
-            //     }
-
-            //     render_path(pintar, &path, color, thick);
-            // }
-
-            // for path in pathlog.direct_paths.paths() {
-            //     // if !state.mute_paths.contains_key(&path.id()) { state.mute_paths.insert(path.id(), false); }
-            //     // if !state.solo_paths.contains_key(&path.id()) { state.solo_paths.insert(path.id(), false); }
-
-            //     let mut visible = true;
-            //     for v in state.solo_paths.values() {
-            //         if *v {visible = false;}
-            //     }
-            //     if state.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-            //     if state.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
-            //     if !visible { continue; }
-            //     render_path(&path, pintar, [1.0, 1.0, 1.0, 1.0], 0.02);
-            // }
-
             pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
             render_triggers(pintar, config, pathlog);
-
-            // for collider in &pathlog.checkpoint_triggers {
-            //     pintar.add_default_mesh(pintar::primitives::cube::new(config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-            // }
-
-            // for i in 0..2 {
-            //     if let Some(collider) = pathlog.main_triggers[i] {
-            //         pintar.add_default_mesh(pintar::primitives::cube::new(config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-            //     }
-            // }
 
             pintar.render();
             // pintar.clear_all_vertex_groups();
@@ -387,12 +242,14 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 None => egui::RawInput::default(),
             };
 
-            let mut global_state = GLOBAL_STATE.as_mut().unwrap();
+            // let mut global_state = GLOBAL_STATE.as_mut().unwrap();
 
             ui::check_input(&input, &mut global_state.egui, &mut global_state.config);
 
             dx_renderer
                 .paint(&this, &mut global_state, input.clone(), |ctx, state| {
+                    // ctx.set_zoom_factor(state.config.zoom);
+
                     egui::Window::new("Celestial")
                         .default_size(egui::vec2(300f32, 300f32))
                         .vscroll(true)

@@ -1,12 +1,14 @@
 use std::fs;
 use std::vec::Vec;
-
+use tracing::{error, info};
 use glam::{Vec3, Mat3};
 use serde_binary::binary_stream;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 use crate::error::Error;
+
+const FILE_VERSION : &str = "0.5";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
@@ -331,7 +333,7 @@ impl CompFile {
         ];
 
         CompFile {
-            version: "v0.5".into(),
+            version: FILE_VERSION.into(),
             trigger_data,
             collections,
         }
@@ -358,17 +360,21 @@ impl CompFile {
 
     pub fn from_file(file_path: String) -> Result<CompFile, Error> {
         let file_content = fs::read(file_path)?;
-        if let Ok(comp_file) = serde_binary::from_vec::<CompFile>(file_content.clone(), binary_stream::Endian::Little) {
-            Ok(comp_file)
+
+        let version_bytes = FILE_VERSION.as_bytes().to_vec();
+        let header_bytes = vec![vec![3, 0, 0, 0, 7, 0, 0, 0], "version".as_bytes().to_vec(), (version_bytes.len() as u32).to_le_bytes().to_vec(), version_bytes].concat();
+
+        if file_content[..header_bytes.len() + 1].iter().zip(&header_bytes).filter(|&(a, b)| a == b).count() == header_bytes.len() {
+            Ok(serde_binary::from_vec::<CompFile>(file_content.clone(), binary_stream::Endian::Little)?)
         }
-        else if let Ok(old_comp_file) = serde_binary::from_vec::<OldCompFile>(file_content, binary_stream::Endian::Little) {
+        else {
+            let old_comp_file = serde_binary::from_vec::<OldCompFile>(file_content, binary_stream::Endian::Little)?;
             let mut collections = Vec::new();
             for old_collection in old_comp_file.collections {
                 collections.push(PathCollection::from(old_collection));
             }
-            Ok(CompFile { version: "0.5".into(), trigger_data: old_comp_file.trigger_data, collections })
+            Ok(CompFile { version: FILE_VERSION.into(), trigger_data: old_comp_file.trigger_data, collections })
         }
-        else { Err(Error::FileDecodeFailed()) }
     }
 
 	pub fn to_file(&self, file_path: String) {

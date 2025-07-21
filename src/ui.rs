@@ -978,6 +978,12 @@ fn draw_config_tab(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigSt
             });
             ui.end_row();
 
+            ui.label("UI Scale");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(egui::DragValue::new(&mut config.zoom).speed(0.1).clamp_range(0.3..=3.0));
+            });
+            ui.end_row();
+
             ui.label("Start Trigger Size");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(egui::DragValue::new(&mut config.trigger_size[0][2]).speed(0.1).clamp_range(0.1..=10.0));

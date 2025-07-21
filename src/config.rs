@@ -21,6 +21,8 @@ pub struct ConfigState {
     pub autosave: bool,
     pub autoreset: bool,
 
+    pub zoom: f32,
+
 	// pub toggle_window_keybind: Shortcut,
 	pub start_keybind: Shortcut,
 	pub stop_keybind: Shortcut,
@@ -52,6 +54,7 @@ impl ConfigState {
             direct_mode: false,
             autosave: false,
             autoreset: true,
+            zoom: 1.0,
             // toggle_window_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Home}), None),
             start_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Comma}), None),
             stop_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Period}), None),
@@ -101,6 +104,7 @@ impl ConfigState {
 
         if let Some(section) = general_section {
             set_if_ok!(self.autoreset, section.get("autoreset").unwrap_or("true").parse::<bool>());
+            set_if_ok!(self.zoom, section.get("zoom").unwrap_or("1.0").parse::<f32>());
 
             set_if_ok!(self.start_keybind, Shortcut::from_string(section.get("start_keybind").unwrap_or("")));
             set_if_ok!(self.stop_keybind, Shortcut::from_string(section.get("stop_keybind").unwrap_or("")));
@@ -146,6 +150,7 @@ impl ConfigState {
         conf.with_section(Some("General"))
             // .set("show_ui", self.show_ui.to_string())
             .set("autoreset", self.autoreset.to_string())
+            .set("zoom", self.zoom.to_string())
             // .set("toggle_window_keybind", shortcut_to_string(self.toggle_window_keybind))
             .set("start_keybind", self.start_keybind.to_string())
             .set("stop_keybind", self.stop_keybind.to_string())
