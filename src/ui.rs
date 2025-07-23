@@ -1,31 +1,20 @@
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::PI;
-use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
 use egui::epaint::Hsva;
 use egui::Color32;
 use uuid::Uuid;
-use native_dialog::FileDialog;
-use egui_keybind::{Keybind, Shortcut};
-use tracing::error;
-use windows::Win32::UI::WindowsAndMessaging::UIS_CLEAR;
+use egui_keybind::Keybind;
 
-use crate::config::{ConfigState, AsColor32, AsHsva, CompareKeybindToEvent};
-use crate::pathlog::PathLog;
-use crate::pathdata::{BoxCollider, HighPassFilter, Path, PathCollection};
-use crate::{gamedata, GlobalState, RenderUpdates, GLOBAL_STATE, RX};
+use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
+use crate::pathdata::HighPassFilter;
+use crate::{gamedata, GlobalState, GLOBAL_STATE, RX};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
-
-// enum RX {
-//     Save { rx: mpsc::Receiver<Result<Option<PathBuf>, native_dialog::Error>> },
-//     Load { rx: mpsc::Receiver<Result<Option<PathBuf>, native_dialog::Error>> },
-// }
 
 #[derive(PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
 
+#[derive(Clone, Copy)]
 pub struct Teleport {
     pub location: [f32; 3],
     pub rotation: [f32; 3],
@@ -75,6 +64,8 @@ pub enum UIEvent {
     },
     SaveComparison,
     LoadComparison,
+    SaveConfig,
+    LoadConfig,
     SelectPath {
         path_id: Uuid,
         collection_id: Uuid,
@@ -88,13 +79,14 @@ pub enum UIEvent {
     },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShapeType {
     Box,
     Sphere,
     Cylinder,
 }
 
+#[derive(Clone, Copy)]
 pub struct Shape {
     id: Uuid,
     pub shape_type: ShapeType,
@@ -144,7 +136,7 @@ pub struct UIState {
 
 impl UIState {
     pub fn init() -> UIState {
-        let uistate = UIState {
+        let ui_state = UIState {
             events: VecDeque::new(),
             file_path_rx: None,
             tab: Tab::Comparison,
@@ -162,266 +154,20 @@ impl UIState {
             custom_shapes: Vec::new(),
         };
 
-        uistate
+        ui_state
     }
-
-    // pub unsafe fn process_events(&mut self, state.pathlog: &mut PathLog, state.updates: &mut RenderUpdates) {
-    // pub unsafe fn process_events(&mut self, state: &mut GlobalState) {
-    //     let mut loop_events : VecDeque<UIEvent> = VecDeque::new();
-
-    //     while let Some(event) = self.events.pop_front() {
-    //         match event {
-    //             UIEvent::DeletePath { path_id, collection_id } => {
-    //                 self.mute_paths.remove(&path_id);
-    //                 self.solo_paths.remove(&path_id);
-    //                 state.pathlog.remove(path_id, collection_id);
-    //                 state.updates.paths = true;
-    //             }
-    //             UIEvent::ChangeDirectMode { new } => {
-    //                 state.pathlog.set_direct_mode(new);
-    //             }
-    //             UIEvent::ChangeAutosave { new } => {
-    //                 state.pathlog.set_autosave(new);
-    //             }
-    //             UIEvent::ChangeAutoReset { new } => {
-    //                 state.pathlog.set_autoreset(new);
-    //             }
-    //             UIEvent::SpawnTrigger { index, position, rotation, size } => {
-    //                  if state.pathlog.is_empty() {
-    //                     state.pathlog.create_trigger(index, position, rotation, size);
-    //                     self.events.push_back(UIEvent::SpawnTeleport { index });
-    //                 }
-    //                 else {
-    //                     // TODO: popup warning
-    //                 }
-    //             }
-    //             UIEvent::StartRecording => {
-    //                 state.pathlog.start();
-    //             }
-    //             UIEvent::StopRecording => {
-    //                 self.mute_paths.insert(state.pathlog.recording_path.id(), false);
-    //                 self.solo_paths.insert(state.pathlog.recording_path.id(), false);
-    //                 state.pathlog.stop();
-    //                 state.updates.paths = true;
-    //             }
-    //             UIEvent::ResetRecording => {
-    //                 state.pathlog.reset();
-    //             }
-    //             UIEvent::ClearTriggers => {
-    //                 state.pathlog.clear_triggers();
-    //             }
-    //             UIEvent::CreateCollection => {
-    //                 let new_collection = PathCollection::new(DEFAULT_COLLECTION_NAME.to_string());
-    //                 self.mute_collections.insert(new_collection.id(), false);
-    //                 self.solo_collections.insert(new_collection.id(), false);
-    //                 self.selected_paths.insert(new_collection.id(), Vec::new());
-    //                 state.pathlog.path_collections.push(new_collection);
-    //             }
-    //             UIEvent::RenameCollection { id, mut new_name } => {
-    //                 for i in 0..state.pathlog.path_collections.len() {
-    //                     if state.pathlog.path_collections[i].id() == id {
-    //                         if new_name == "" { new_name = "can't put nothing bro".to_string() }
-    //                         state.pathlog.path_collections[i].name = new_name.clone();
-    //                     }
-    //                 }
-    //             }
-    //             UIEvent::DeleteCollection { id } => {
-    //                 if let Some(index) = state.pathlog.path_collections.iter().position(|c| c.id() == id) {
-
-    //                     for path in state.pathlog.path_collections[index].paths() {
-    //                         self.mute_paths.remove(&path.id());
-    //                         self.solo_paths.remove(&path.id());
-    //                     }
-
-    //                     self.mute_collections.remove(&id);
-    //                     self.solo_collections.remove(&id);
-    //                     state.pathlog.path_collections.remove(index);
-    //                     state.updates.paths = true;
-    //                 }
-    //             }
-    //             UIEvent::ToggleActive { id } => {
-    //                 if state.pathlog.active_collection == Some(id) {
-    //                     state.pathlog.active_collection = None;
-    //                 }
-    //                 else {
-    //                     state.pathlog.active_collection = Some(id);
-    //                 }
-    //             }
-    //             UIEvent::ToggleGoldFilter { collection_id } => {
-    //                 if !state.pathlog.filters.contains_key(&collection_id) {
-    //                     state.pathlog.filters.insert(collection_id, HighPassFilter::GOLD);
-    //                 }
-    //                 else {
-    //                     if let Some(HighPassFilter::GOLD) = state.pathlog.filters.get(&collection_id) {
-    //                         state.pathlog.filters.remove(&collection_id);
-    //                     }
-    //                     else {
-    //                         *state.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::GOLD;
-    //                     }
-    //                 }
-    //             }
-    //             UIEvent::SetPathFilter { collection_id, path_id } => {
-    //                 match state.pathlog.filters.get_mut(&collection_id) {
-    //                     Some(HighPassFilter::PATH{ id }) => {
-    //                         if *id == path_id {
-    //                             state.pathlog.filters.remove(&collection_id);
-    //                         }
-    //                         else {
-    //                             *state.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
-    //                         }
-    //                     },
-    //                     Some(HighPassFilter::GOLD) => {
-    //                         *state.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
-    //                     }
-    //                     _ => {
-    //                         state.pathlog.filters.insert(collection_id, HighPassFilter::PATH{ id: path_id });
-    //                     }
-    //                 }
-    //             }
-    //             UIEvent::SaveComparison => {
-    //                 if self.file_path_rx.is_none() {
-    //                     let (tx, rx) = mpsc::channel();
-    //                     thread::spawn(move || {
-    //                             tx.send(FileDialog::new().show_save_single_file()).unwrap();
-    //                     });
-    //                     self.file_path_rx = Some(RX::Save { rx });
-    //                     loop_events.push_back(UIEvent::SaveComparison);
-    //                 }
-    //                 else if let Some(RX::Save { rx }) = &self.file_path_rx {
-    //                     if let Ok(dialog_result) = rx.try_recv() {
-    //                         if let Ok(Some(path)) = dialog_result { state.pathlog.save_comparison(path.to_str().unwrap().to_string()); }
-    //                         self.file_path_rx = None;
-    //                     }
-    //                     else { loop_events.push_back(UIEvent::SaveComparison); }
-    //                 }
-    //             }
-    //             UIEvent::LoadComparison => {
-    //                 if self.file_path_rx.is_none() {
-    //                     let (tx, rx) = mpsc::channel();
-    //                     thread::spawn(move || {
-    //                         tx.send(FileDialog::new().show_open_single_file()).unwrap();
-    //                     });
-    //                     self.file_path_rx = Some(RX::Load { rx });
-    //                     loop_events.push_back(UIEvent::LoadComparison);
-    //                 }
-    //                 else if let Some(RX::Load { rx }) = &self.file_path_rx {
-    //                     if let Ok(dialog_result) = rx.try_recv() {
-    //                         if let Ok(Some(path)) = dialog_result {
-    //                             if let Err(e) = state.pathlog.load_comparison(path.to_str().unwrap().to_string()) {
-    //                                 error!("{e}");
-    //                                 continue;
-    //                             }
-
-    //                             self.mute_collections.clear();
-    //                             self.solo_collections.clear();
-    //                             self.selected_paths.clear();
-    //                             self.mute_paths.clear();
-    //                             self.solo_paths.clear();
-
-    //                             for collection in &state.pathlog.path_collections {
-    //                                 self.mute_collections.insert(collection.id(), false);
-    //                                 self.solo_collections.insert(collection.id(), false);
-    //                                 self.selected_paths.insert(collection.id(), Vec::new());
-
-    //                                 for path in collection.paths() {
-    //                                     self.mute_paths.insert(path.id(), false);
-    //                                     self.solo_paths.insert(path.id(), false);
-    //                                 }
-    //                             }
-
-    //                             if let Some(start_trigger) = state.pathlog.main_triggers[0] {
-    //                                 self.teleports[0] = Some(Teleport {
-    //                                     location: start_trigger.position,
-    //                                     rotation: start_trigger.rotation(),
-    //                                     camera_rotation: None,
-    //                                 })
-    //                             }
-
-    //                             if let Some(end_trigger) = state.pathlog.main_triggers[1] {
-    //                                 self.teleports[1] = Some(Teleport {
-    //                                     location: end_trigger.position,
-    //                                     rotation: end_trigger.rotation(),
-    //                                     camera_rotation: None,
-    //                                 })
-    //                             }
-    //                         }
-    //                         self.file_path_rx = None;
-    //                         state.updates.paths = true;
-    //                     }
-    //                     else { loop_events.push_back(UIEvent::LoadComparison); }
-    //                 }
-    //             }
-    //             UIEvent::SelectPath { path_id, collection_id, modifier } => {
-    //                 let collection = &state.pathlog.path_collections[state.pathlog.path_collections.iter().position(|c| c.id() == collection_id).unwrap()];
-    //                 let path = collection.get_path(path_id).unwrap();
-
-    //                 let selected = self.selected_paths.get_mut(&collection.id()).unwrap();
-
-    //                 match modifier {
-    //                     1 => {
-    //                         let last_id = *selected.last().unwrap_or(&(path.id()));
-    //                         let mut last_pos = collection.paths().iter().position(|p| p.id() == last_id).unwrap();
-    //                         let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
-    //                         if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
-    //                         for p in &collection.paths()[this_pos..last_pos] {
-    //                             if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);}
-    //                             else { selected.push(p.id()) }
-    //                         }
-    //                     },
-    //                     2 => {
-    //                         if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
-    //                         else { selected.push(path.id()) }
-    //                     },
-    //                     _ => {
-    //                         selected.clear();
-    //                         selected.push(path.id());
-    //                     }
-    //                 }
-    //                 state.updates.paths = true;
-    //             }
-    //             UIEvent::Teleport { index } => {
-    //                 if let Some(teleport) = &self.teleports[index] {
-    //                     gamedata::teleport_player(teleport.location, teleport.rotation);
-    //                     if let Some(cam_rotation) = teleport.camera_rotation {
-    //                         gamedata::set_camera_rotation(cam_rotation);
-    //                     }
-    //                     loop_events.push_back(UIEvent::ResetRecording);
-    //                 }
-    //             }
-    //             UIEvent::SpawnTeleport { index } => {
-    //                 if index > 1 { continue; }
-    //                 self.teleports[index] = Some(Teleport {
-    //                     location: gamedata::get_player_position(),
-    //                     rotation: gamedata::get_player_rotation(),
-    //                     camera_rotation: Some(gamedata::get_camera_rotation()),
-    //                 })
-    //             }
-    //         }
-    //     }
-
-    //     self.events.append(&mut loop_events);
-    // }
 }
 
-// pub fn check_input(input: &egui::RawInput, egui: &mut UIState, config: &mut ConfigState) {
 pub fn check_input(input: &egui::RawInput) {
-    let direct_mode : bool;
-    let start_keybind : Shortcut;
-    let stop_keybind : Shortcut;
-    let reset_keybind : Shortcut;
-    let clear_keybind : Shortcut;
-    let teleport_keybinds : [Shortcut; 2];
-    let spawn_teleport_keybinds : [Shortcut; 2];
-
     let state = GLOBAL_STATE.lock().unwrap();
 
-    direct_mode = state.config.direct_mode;
-    start_keybind = state.config.start_keybind;
-    stop_keybind = state.config.stop_keybind;
-    reset_keybind = state.config.reset_keybind;
-    clear_keybind = state.config.clear_keybind;
-    teleport_keybinds = state.config.teleport_keybinds;
-    spawn_teleport_keybinds = state.config.spawn_teleport_keybinds;
+    let direct_mode = state.config.direct_mode;
+    let start_keybind = state.config.start_keybind;
+    let stop_keybind = state.config.stop_keybind;
+    let reset_keybind = state.config.reset_keybind;
+    let clear_keybind = state.config.clear_keybind;
+    let teleport_keybinds = state.config.teleport_keybinds;
+    let spawn_teleport_keybinds = state.config.spawn_teleport_keybinds;
 
     drop(state);
 
@@ -497,7 +243,7 @@ pub fn check_input(input: &egui::RawInput) {
     }
 
     if let Ok(mut state) = GLOBAL_STATE.lock() {
-        state.egui.modifier = modifier;
+        state.ui_state.modifier = modifier;
         state.events.append(&mut events);
     }
 }
@@ -511,13 +257,13 @@ pub fn draw_ui(ui: &mut egui::Ui) {
         // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-            ui.selectable_value(&mut state.egui.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
-            ui.selectable_value(&mut state.egui.tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
+            ui.selectable_value(&mut state.ui_state.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
+            ui.selectable_value(&mut state.ui_state.tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
             if state.config.custom_shapes {
-                ui.selectable_value(&mut state.egui.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
+                ui.selectable_value(&mut state.ui_state.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
             }
-            ui.selectable_value(&mut state.egui.tab, Tab::Config, egui::RichText::new("Config").strong());
-            ui.selectable_value(&mut state.egui.tab, Tab::Credits, egui::RichText::new("Credits").strong());
+            ui.selectable_value(&mut state.ui_state.tab, Tab::Config, egui::RichText::new("Config").strong());
+            ui.selectable_value(&mut state.ui_state.tab, Tab::Credits, egui::RichText::new("Credits").strong());
         });
     }
 
@@ -548,19 +294,20 @@ pub fn draw_timer(ui: &mut egui::Ui) {
     ).selectable(false));
 }
 
-// fn draw_comparison_tab(ui: &mut egui::Ui, state.egui: &mut UIState, config: &mut ConfigState, state.pathlog: &PathLog) {
+// fn draw_comparison_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &mut ConfigState, state.pathlog: &PathLog) {
 fn draw_comparison_tab(ui: &mut egui::Ui) {
-    if GLOBAL_STATE.lock().unwrap().egui.tab != Tab::Comparison { return; }
-    ui.separator();
+    if GLOBAL_STATE.lock().unwrap().ui_state.tab != Tab::Comparison { return; }
 
     let state = GLOBAL_STATE.lock().unwrap();
 
-    let mut active_collection = state.pathlog.active_collection;
-    let mut renaming_collection = state.egui.renaming_collection;
-    let mut renaming_name = state.egui.renaming_name.clone();
-    let mut delete_mode = state.egui.delete_mode;
-    let accent_colors = state.config.accent_colors;
+    let active_collection = state.pathlog.active_collection;
     let path_collections_len = state.pathlog.path_collections.len();
+
+    let accent_colors = state.config.accent_colors;
+
+    let mut renaming_collection = state.ui_state.renaming_collection;
+    let mut renaming_name = state.ui_state.renaming_name.clone();
+    let mut delete_mode = state.ui_state.delete_mode;
 
     drop(state);
 
@@ -568,6 +315,8 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut mute_toggles : Vec<Uuid> = Vec::new();
     let mut solo_toggles : Vec<Uuid> = Vec::new();
     let mut to_clear : Vec<Uuid> = Vec::new();
+
+    ui.separator();
 
     if ui.interact_bg(egui::Sense::click()).clicked() {
         renaming_collection = None;
@@ -588,7 +337,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
         .striped(true)
         .show(ui, |ui| {
             // if ui.interact_bg(egui::Sense::click()).clicked() {
-            //     state.egui.renaming_collection = None;
+            //     state.ui_state.renaming_collection = None;
             // }
             let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
             let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
@@ -635,14 +384,14 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
                 let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
-                if *GLOBAL_STATE.lock().unwrap().egui.solo_collections.get(&collection_id).unwrap() {
+                if *GLOBAL_STATE.lock().unwrap().ui_state.solo_collections.get(&collection_id).unwrap() {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                     solo_button_text = solo_button_text.strong();
                 }
 
                 if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // *state.egui.solo_collections.get_mut(&collection_id).unwrap() ^= true;
+                    // *state.ui_state.solo_collections.get_mut(&collection_id).unwrap() ^= true;
                     solo_toggles.push(collection_id);
                 }
 
@@ -650,14 +399,14 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
-                if *GLOBAL_STATE.lock().unwrap().egui.mute_collections.get(&collection_id).unwrap() {
+                if *GLOBAL_STATE.lock().unwrap().ui_state.mute_collections.get(&collection_id).unwrap() {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                     mute_button_text = mute_button_text.strong();
                 }
 
                 if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // *state.egui.mute_collections.get_mut(&collection_id).unwrap() ^= true;
+                    // *state.ui_state.mute_collections.get_mut(&collection_id).unwrap() ^= true;
                     mute_toggles.push(collection_id);
                 }
 
@@ -705,7 +454,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     // })
                     .show(ui, |ui| {
                         if ui.interact_bg(egui::Sense::click()).clicked() {
-                            // state.egui.selected_paths.get_mut(&collection_id).unwrap().clear();
+                            // state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
                             renaming_collection = None;
                             to_clear.push(collection_id);
                         }
@@ -747,25 +496,25 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
     for collection_id in to_clear {
-        state.egui.selected_paths.get_mut(&collection_id).unwrap().clear();
+        state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
     }
 
     for collection_id in solo_toggles {
-        *state.egui.solo_collections.get_mut(&collection_id).unwrap() ^= true;
+        *state.ui_state.solo_collections.get_mut(&collection_id).unwrap() ^= true;
     }
 
     for collection_id in mute_toggles {
-        *state.egui.mute_collections.get_mut(&collection_id).unwrap() ^= true;
+        *state.ui_state.mute_collections.get_mut(&collection_id).unwrap() ^= true;
     }
 
-    state.egui.renaming_collection = renaming_collection;
-    state.egui.renaming_name = renaming_name;
-    state.egui.delete_mode = delete_mode;
+    state.ui_state.renaming_collection = renaming_collection;
+    state.ui_state.renaming_name = renaming_name;
+    state.ui_state.delete_mode = delete_mode;
     state.events.append(&mut events);
 }
 
-// fn draw_paths_tab(ui: &mut egui::Ui, state.egui: &mut UIState, config: &ConfigState, state.pathlog: &PathLog) {
-//     if state.egui.tab != Tab::Paths { return; }
+// fn draw_paths_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &ConfigState, state.pathlog: &PathLog) {
+//     if state.ui_state.tab != Tab::Paths { return; }
 //     ui.separator();
 
 //     egui::Grid::new("paths_grid")
@@ -774,11 +523,11 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 //     .striped(true)
 //     .show(ui, |ui| {
 //         if ui.interact_bg(egui::Sense::click()).clicked() {
-//             state.egui.selected_paths.get_mut(&state.pathlog.direct_paths.id()).unwrap().clear();
+//             state.ui_state.selected_paths.get_mut(&state.pathlog.direct_paths.id()).unwrap().clear();
 //         }
 
 //         for path in state.pathlog.direct_paths.paths() {
-//             draw_path(ui, state.egui, config, state.pathlog, path, &state.pathlog.direct_paths);
+//             draw_path(ui, state.ui_state, config, state.pathlog, path, &state.pathlog.direct_paths);
 //         }
 //     });
 // }
@@ -790,14 +539,14 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let path_id = state.pathlog.path_collections[collection].paths()[path].id();
     let path_time = state.pathlog.path_collections[collection].paths()[path].time();
     let collection_id = state.pathlog.path_collections[collection].id();
+    let latest_path = state.pathlog.latest_path;
 
     let accent_colors = state.config.accent_colors;
     let select_color = state.config.select_color;
 
-    let mods = state.egui.modifier;
-    let selected = state.egui.selected_paths.get(&collection_id).unwrap().clone();
-    let delete_mode = state.egui.delete_mode;
-    let latest_path = state.pathlog.latest_path;
+    let mods = state.ui_state.modifier;
+    let selected = state.ui_state.selected_paths.get(&collection_id).unwrap().clone();
+    let delete_mode = state.ui_state.delete_mode;
 
     drop(state);
 
@@ -813,7 +562,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
         let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-        if *GLOBAL_STATE.lock().unwrap().egui.mute_paths.get(&path_id).unwrap() {
+        if *GLOBAL_STATE.lock().unwrap().ui_state.mute_paths.get(&path_id).unwrap() {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
             ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
             mute_button_text = mute_button_text.strong();
@@ -828,7 +577,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
         let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
-        if *GLOBAL_STATE.lock().unwrap().egui.solo_paths.get(&path_id).unwrap() {
+        if *GLOBAL_STATE.lock().unwrap().ui_state.solo_paths.get(&path_id).unwrap() {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
             ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
             solo_button_text = solo_button_text.strong();
@@ -847,8 +596,8 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         // let original_bg_stroke = ui.visuals_mut().widgets.inactive.bg_stroke;
         // ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
 
-        // let mods = state.egui.modifier;
-        // let selected = state.egui.selected_paths.get_mut(&collection_id).unwrap();
+        // let mods = state.ui_state.modifier;
+        // let selected = state.ui_state.selected_paths.get_mut(&collection_id).unwrap();
         if selected.contains(&path_id) {
             ui.visuals_mut().override_text_color = Some(select_color.as_color32());
         }
@@ -899,27 +648,27 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
     if mute_toggle {
-        *state.egui.mute_paths.get_mut(&path_id).unwrap() ^= true;
+        *state.ui_state.mute_paths.get_mut(&path_id).unwrap() ^= true;
     }
 
     if solo_toggle {
-        *state.egui.solo_paths.get_mut(&path_id).unwrap() ^= true;
+        *state.ui_state.solo_paths.get_mut(&path_id).unwrap() ^= true;
     }
 
     if delete {
-        state.egui.selected_paths.get_mut(&collection_id).unwrap().clear();
-        state.egui.events.push_back(UIEvent::DeletePath { path_id, collection_id });
+        state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
+        state.ui_state.events.push_back(UIEvent::DeletePath { path_id, collection_id });
     }
 
-    state.egui.delete_mode = delete_mode;
+    state.ui_state.delete_mode = delete_mode;
     state.events.append(&mut events);
 }
 
-// fn draw_triggers_tab(ui: &mut egui::Ui, state.egui: &mut UIState, _config: &mut ConfigState, state.pathlog: &mut PathLog) {
+// fn draw_triggers_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, _config: &mut ConfigState, state.pathlog: &mut PathLog) {
 fn draw_triggers_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
-    if state.egui.tab != Tab::Triggers { return; }
+    if state.ui_state.tab != Tab::Triggers { return; }
     ui.separator();
 
     let mut delete_list: Vec<Uuid> = Vec::new();
@@ -929,15 +678,15 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
     }
 
     // if let Some(collider) = &mut state.pathlog.main_triggers[0] {
-    //     draw_trigger(ui, &mut state.egui, collider, &mut delete_list);
+    //     draw_trigger(ui, &mut state.ui_state, collider, &mut delete_list);
     // }
 
     // for trigger in &mut state.pathlog.checkpoint_triggers {
-    //     draw_trigger(ui, &mut state.egui, trigger, &mut delete_list);
+    //     draw_trigger(ui, &mut state.ui_state, trigger, &mut delete_list);
     // }
 
     // if let Some(collider) = &mut state.pathlog.main_triggers[1] {
-    //     draw_trigger(ui, &mut state.egui, collider, &mut delete_list);
+    //     draw_trigger(ui, &mut state.ui_state, collider, &mut delete_list);
     // }
 
     for id in delete_list {
@@ -956,14 +705,14 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
                 // let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-                // if state.egui.hide_checkpoints {
+                // if state.ui_state.hide_checkpoints {
                 //     ui.visuals_mut().widgets.hovered.weak_bg_fill = config.accent_colors[0].gamma_multiply(1.2);
                 //     ui.visuals_mut().widgets.inactive.weak_bg_fill = config.accent_colors[0];
                 //     mute_button_text = mute_button_text.strong();
                 // }
 
                 // if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                //     state.egui.hide_checkpoints ^= true;
+                //     state.ui_state.hide_checkpoints ^= true;
                 // }
 
                 // ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
@@ -972,7 +721,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    state.egui.delete_mode ^= true;
+                    state.ui_state.delete_mode ^= true;
                 }
                 // if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                 //     state.pathlog.checkpoint_triggers.push(BoxCollider::new(pos, rotation, size));
@@ -982,7 +731,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
         });
 }
 
-// fn draw_trigger(ui: &mut egui::Ui, state.egui: &mut UIState, trigger: &mut BoxCollider, delete_list: &mut Vec<Uuid>) {
+// fn draw_trigger(ui: &mut egui::Ui, state.ui_state: &mut UIState, trigger: &mut BoxCollider, delete_list: &mut Vec<Uuid>) {
 fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
     let trigger = match trigger_index {
         0 | 1 => {
@@ -1011,7 +760,7 @@ fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            if state.egui.delete_mode {
+            if state.ui_state.delete_mode {
                 if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     delete_list.push(trigger.id());
                 }
@@ -1065,7 +814,7 @@ fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize
     ui.separator();
 
     // ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-    //     if state.egui.delete_mode {
+    //     if state.ui_state.delete_mode {
     //         if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
     //             delete_list.push(trigger.id());
     //         }
@@ -1075,11 +824,40 @@ fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize
     ui.end_row();
 }
 
-// fn draw_config_tab(ui: &mut egui::Ui, state.egui: &mut UIState, config: &mut ConfigState) {
 fn draw_config_tab(ui: &mut egui::Ui) {
-    let mut state = GLOBAL_STATE.lock().unwrap();
+    if GLOBAL_STATE.lock().unwrap().ui_state.tab != Tab::Config { return; }
 
-    if state.egui.tab != Tab::Config { return; }
+    let state = GLOBAL_STATE.lock().unwrap();
+
+    let mut autosave = state.config.autosave;
+    let mut autoreset = state.config.autoreset;
+    let mut zoom = state.config.zoom;
+    let mut trigger_sizes = state.config.trigger_sizes;
+
+    let direct_mode = state.config.direct_mode;
+    let mut start_keybind = state.config.start_keybind;
+    let mut stop_keybind = state.config.stop_keybind;
+    let mut reset_keybind = state.config.reset_keybind;
+    let mut clear_keybind = state.config.clear_keybind;
+    let mut teleport_keybinds = state.config.teleport_keybinds;
+    let mut spawn_teleport_keybinds = state.config.spawn_teleport_keybinds;
+
+    let mut timer_size = state.config.timer_size;
+    // let mut timer_position = state.config.timer_position;
+	let mut trigger_colors = state.config.trigger_colors;
+	// let mut checkpoint_color = state.config.checkpoint_color;
+    let mut fast_color = state.config.fast_color;
+    let mut slow_color = state.config.slow_color;
+    let mut gold_color = state.config.gold_color;
+    let mut select_color = state.config.select_color;
+    let mut accent_colors = state.config.accent_colors;
+
+    // pub custom_shapes: bool,
+
+    drop(state);
+
+    let mut events : VecDeque<UIEvent> = VecDeque::new();
+
     ui.separator();
 
     ui.add_space(5.0);
@@ -1091,54 +869,54 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             // ui.label("Direct Recording Mode");
             // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             //     if toggle_switch(ui, &mut config.direct_mode).clicked() {
-            //         state.egui.events.push_back(UIEvent::ChangeDirectMode { new: config.direct_mode });
+            //         state.ui_state.events.push_back(UIEvent::ChangeDirectMode { new: config.direct_mode });
             //     }
             // });
             // ui.end_row();
 
             ui.label("Comparison Autosave");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if toggle_switch(ui, &mut state.config.autosave).clicked() {
-                    let new = state.config.autosave;
-                    state.egui.events.push_back(UIEvent::ChangeAutosave { new });
+                if toggle_switch(ui, &mut autosave).clicked() {
+                    let new = autosave;
+                    events.push_back(UIEvent::ChangeAutosave { new });
                 }
             });
             ui.end_row();
 
             ui.label("Reset Recording on Start");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let new = state.config.autoreset;
-                if toggle_switch(ui, &mut state.config.autoreset).clicked() {
-                    state.egui.events.push_back(UIEvent::ChangeAutoReset { new });
+                let new = autoreset;
+                if toggle_switch(ui, &mut autoreset).clicked() {
+                    events.push_back(UIEvent::ChangeAutoReset { new });
                 }
             });
             ui.end_row();
 
             ui.label("UI Scale");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut state.config.zoom).speed(0.1).clamp_range(0.3..=3.0));
+                ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.3..=3.0));
             });
             ui.end_row();
 
             ui.label("Start Trigger Size");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[0][2]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[0][1]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[0][0]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[0][2]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[0][1]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[0][0]).speed(0.1).clamp_range(0.1..=10.0));
             });
             ui.end_row();
 
             ui.label("End Trigger Size");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[1][2]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[1][1]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut state.config.trigger_size[1][0]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[1][2]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[1][1]).speed(0.1).clamp_range(0.1..=10.0));
+                ui.add(egui::DragValue::new(&mut trigger_sizes[1][0]).speed(0.1).clamp_range(0.1..=10.0));
             });
             ui.end_row();
 
             ui.label("Timer Size");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut state.config.timer_size).speed(0.5).clamp_range(6.9..=69.0));
+                ui.add(egui::DragValue::new(&mut timer_size).speed(0.5).clamp_range(6.9..=69.0));
             });
             ui.end_row();
         });
@@ -1152,61 +930,61 @@ fn draw_config_tab(ui: &mut egui::Ui) {
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            if state.config.direct_mode {
+            if direct_mode {
                 ui.label("Start Recording");
             }
             else {
                 ui.label("Spawn Start Trigger");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.start_keybind, "start_keybind"));
+                ui.add(Keybind::new(&mut start_keybind, "start_keybind"));
             });
             ui.end_row();
 
-            if state.config.direct_mode {
+            if direct_mode {
                 ui.label("Stop Recording");
             }
             else {
                 ui.label("Spawn End Trigger");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.stop_keybind, "stop_keybind"));
+                ui.add(Keybind::new(&mut stop_keybind, "stop_keybind"));
             });
             ui.end_row();
 
             ui.label("Reset Recording");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.reset_keybind, "reset_keybind"));
+                ui.add(Keybind::new(&mut reset_keybind, "reset_keybind"));
             });
             ui.end_row();
 
             ui.label("Delete Triggers");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.clear_keybind, "clear_keybind"));
+                ui.add(Keybind::new(&mut clear_keybind, "clear_keybind"));
             });
             ui.end_row();
 
             ui.label("Teleport to Location 1");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.teleport_keybinds[0], "teleport_1_keybind"));
+                ui.add(Keybind::new(&mut teleport_keybinds[0], "teleport_1_keybind"));
             });
             ui.end_row();
 
             ui.label("Teleport to Location 2");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.teleport_keybinds[1], "teleport_2_keybind"));
+                ui.add(Keybind::new(&mut teleport_keybinds[1], "teleport_2_keybind"));
             });
             ui.end_row();
 
             ui.label("Set Teleport Location 1");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
+                ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
             });
             ui.end_row();
 
             ui.label("Set Teleport Location 2");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut state.config.spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
+                ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
             });
             ui.end_row();
 
@@ -1231,54 +1009,54 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
             ui.label("Start Trigger");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.trigger_color[0].as_hsva();
+                let mut tmp_color = trigger_colors[0].as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.trigger_color[0] = tmp_color.to_rgba_premultiplied();
+                    trigger_colors[0] = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
 
             ui.label("End Trigger");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.trigger_color[1].as_hsva();
+                let mut tmp_color = trigger_colors[1].as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.trigger_color[1] = tmp_color.to_rgba_premultiplied();
+                    trigger_colors[1] = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
 
             ui.label("Path Gradient: Fast");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.fast_color.as_hsva();
+                let mut tmp_color = fast_color.as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.fast_color = tmp_color.to_rgba_premultiplied();
+                    fast_color = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
 
             ui.label("Path Gradient: Slow");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.slow_color.as_hsva();
+                let mut tmp_color = slow_color.as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.slow_color = tmp_color.to_rgba_premultiplied();
+                    slow_color = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
 
             ui.label("Fastest Path");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.gold_color.as_hsva();
+                let mut tmp_color = gold_color.as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.gold_color = tmp_color.to_rgba_premultiplied();
+                    gold_color = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
 
             ui.label("Selected Path");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.select_color.as_hsva();
+                let mut tmp_color = select_color.as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.select_color = tmp_color.to_rgba_premultiplied();
+                    select_color = tmp_color.to_rgba_premultiplied();
                 }
             });
             ui.end_row();
@@ -1289,18 +1067,18 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
             ui.label("Accent 0");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.accent_colors[0].as_hsva();
+                let mut tmp_color = accent_colors[0].as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.accent_colors[0] = tmp_color.as_color32();
+                    accent_colors[0] = tmp_color.as_color32();
                 }
             });
             ui.end_row();
 
             ui.label("Accent 1");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = state.config.accent_colors[1].as_hsva();
+                let mut tmp_color = accent_colors[1].as_hsva();
                 if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    state.config.accent_colors[1] = tmp_color.as_color32();
+                   accent_colors[1] = tmp_color.as_color32();
                 }
             });
             ui.end_row();
@@ -1310,21 +1088,48 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         if ui.add(egui::Button::new("Save")).clicked() {
-            state.config.write("celestial.ini".to_string());
+            // state.config.write("celestial.ini".to_string());
+            events.push_back(UIEvent::SaveConfig);
         }
         if ui.add(egui::Button::new("Load")).clicked() {
-            if let Err(e) = state.config.read("celestial.ini".to_string()) {
-                println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
-            }
+            // if let Err(e) = state.config.read("celestial.ini".to_string()) {
+            //     println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
+            // }
+            events.push_back(UIEvent::LoadConfig);
         }
     });
-}
 
-// fn draw_credits_tab(ui: &mut egui::Ui, state.egui: &mut UIState) {
-fn draw_credits_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
-    if state.egui.tab != Tab::Credits { return; }
+    state.config.autosave = autosave;
+    state.config.autoreset = autoreset;
+
+    state.config.zoom = zoom;
+    state.config.trigger_sizes = trigger_sizes;
+
+    state.config.start_keybind = start_keybind;
+    state.config.stop_keybind = stop_keybind;
+    state.config.reset_keybind = reset_keybind;
+    state.config.clear_keybind = clear_keybind;
+    state.config.teleport_keybinds = teleport_keybinds;
+    state.config.spawn_teleport_keybinds = spawn_teleport_keybinds;
+
+    state.config.timer_size = timer_size;
+    // state.config.timer_position = timer_position;
+	state.config.trigger_colors = trigger_colors;
+	// state.config.checkpoint_color = checkpoint_color;
+    state.config.fast_color = fast_color;
+    state.config.slow_color = slow_color;
+    state.config.gold_color = gold_color;
+    state.config.select_color = select_color;
+    state.config.accent_colors = accent_colors;
+}
+
+// fn draw_credits_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState) {
+fn draw_credits_tab(ui: &mut egui::Ui) {
+    let state = GLOBAL_STATE.lock().unwrap();
+
+    if state.ui_state.tab != Tab::Credits { return; }
 
     ui.set_min_width(300.0);
     ui.separator();
@@ -1369,50 +1174,50 @@ fn draw_credits_tab(ui: &mut egui::Ui) {
         });
 }
 
-// fn draw_custom_shapes_tab(ui: &mut egui::Ui, state.egui: &mut UIState, config: &mut ConfigState) {
+// fn draw_custom_shapes_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &mut ConfigState) {
 fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
-    if state.egui.tab != Tab::CustomShapes { return; }
+    if state.ui_state.tab != Tab::CustomShapes { return; }
     ui.separator();
 
     let mut delete_list: Vec<Uuid> = Vec::new();
 
-    // for shape in &mut state.egui.custom_shapes {
-    for s in 0..state.egui.custom_shapes.len() {
+    // for shape in &mut state.ui_state.custom_shapes {
+    for s in 0..state.ui_state.custom_shapes.len() {
 
-        let shape_id = state.egui.custom_shapes[s].0.id();
-        // let muted = &mut state.egui.custom_shapes[s].1;
+        let shape_id = state.ui_state.custom_shapes[s].0.id();
+        // let muted = &mut state.ui_state.custom_shapes[s].1;
 
         egui::Grid::new(shape_id.to_string() + "buttons")
         .num_columns(2)
         .spacing([40.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            // let shape = &mut state.egui.custom_shapes[s];
+            // let shape = &mut state.ui_state.custom_shapes[s];
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                // let shape = &mut state.egui.custom_shapes[s];
+                // let shape = &mut state.ui_state.custom_shapes[s];
 
                 let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
                 let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
                 let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-                if state.egui.custom_shapes[s].1 {
+                if state.ui_state.custom_shapes[s].1 {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = state.config.accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = state.config.accent_colors[0];
                     mute_button_text = mute_button_text.strong();
                 }
 
                 if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    state.egui.custom_shapes[s].1 ^= true;
+                    state.ui_state.custom_shapes[s].1 ^= true;
                 }
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-                let shape = &mut state.egui.custom_shapes[s];
+                let shape = &mut state.ui_state.custom_shapes[s];
 
                 egui::ComboBox::new(shape_id.to_string() + "drop_down", "")
                 .selected_text(format!("{:?}", shape.0.shape_type))
@@ -1424,20 +1229,20 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
             });
 
             // ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            //     if state.egui.delete_mode {
+            //     if state.ui_state.delete_mode {
             //         if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
             //             delete_list.push(shape_id);
             //         }
             //     }
             // });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if state.egui.delete_mode {
+                if state.ui_state.delete_mode {
                     if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                         delete_list.push(shape_id);
                     }
                 }
 
-                ui.color_edit_button_hsva(&mut state.egui.custom_shapes[s].0.color);
+                ui.color_edit_button_hsva(&mut state.ui_state.custom_shapes[s].0.color);
             });
             ui.end_row();
         });
@@ -1449,7 +1254,7 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
                 .spacing([10.0, 4.0])
                 .striped(false)
                 .show(ui, |ui| {
-                    let shape = &mut state.egui.custom_shapes[s];
+                    let shape = &mut state.ui_state.custom_shapes[s];
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                         ui.label("Position");
@@ -1519,8 +1324,8 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
     }
 
     for id in delete_list {
-        let pos = state.egui.custom_shapes.iter().position(|s| s.0.id == id);
-        if let Some(i) = pos { state.egui.custom_shapes.remove(i); }
+        let pos = state.ui_state.custom_shapes.iter().position(|s| s.0.id == id);
+        if let Some(i) = pos { state.ui_state.custom_shapes.remove(i); }
     }
 
     egui::Grid::new("util")
@@ -1534,11 +1339,11 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    state.egui.delete_mode ^= true;
+                    state.ui_state.delete_mode ^= true;
                 }
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // state.egui.events.push_back(UIEvent::CreateShape);
-                    state.egui.custom_shapes.push((Shape::new(), false));
+                    // state.ui_state.events.push_back(UIEvent::CreateShape);
+                    state.ui_state.custom_shapes.push((Shape::new(), false));
                 }
             });
             ui.end_row();

@@ -6,13 +6,12 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::Instant;
-use glam::Vec3;
 use native_dialog::FileDialog;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
 use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 use windows::Win32::Foundation::{BOOL, HMODULE, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGISurface, IDXGISwapChain, DXGI_SURFACE_DESC, DXGI_SWAP_CHAIN_DESC};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::Graphics::Direct3D11::{ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11DepthStencilView};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -62,7 +61,7 @@ pub struct ScreenDimensions {
 }
 
 // static TICKRATE : u32 = 60;
-static RECORDING_GROUP : &str = "recording";
+// static RECORDING_GROUP : &str = "recording";
 static TRIGGERS_GROUP : &str = "triggers";
 static TELEPORTS_GROUP : &str = "teleports";
 static SHAPES_GROUP : &str = "custom_shapes";
@@ -70,10 +69,6 @@ static SHAPES_GROUP : &str = "custom_shapes";
 static SCREEN_DIMENSIONS: Lazy<Mutex<ScreenDimensions>> = Lazy::new(|| Mutex::new(ScreenDimensions::default()));
 
 pub static GLOBAL_STATE: Lazy<Mutex<GlobalState>> = Lazy::new(|| Mutex::new(GlobalState::init()));
-// static mut GLOBAL_STATE : Option<GlobalState> = None;
-// static mut DEBUG_STATE : Option<DebugState> = None;
-
-// static PINTAR: Lazy<Mutex<Option<Pintar>>> = Lazy::new(|| Mutex::new(None));
 
 static mut PINTAR : Option<Pintar> = None;
 static mut EGUI_RENDERER : Option<DirectX11Renderer> = None;
@@ -113,10 +108,22 @@ static KEYBOARD_GET_DEVICE_STATE_HOOK: Lazy<GenericDetour<GetDeviceStatusFn>> = 
     }
   });
 
-enum RX {
+pub enum RX {
     Save { rx: mpsc::Receiver<Result<Option<PathBuf>, native_dialog::Error>> },
     Load { rx: mpsc::Receiver<Result<Option<PathBuf>, native_dialog::Error>> },
 }
+
+// pub struct DebugState {
+//     frame_time: u64,
+//     copy_time: u64,
+
+//     frame_count: usize,
+//     // calc_avg: bool,
+//     last_frame: Instant,
+//     last_player_pos: Vec3,
+//     player_speeds: Vec<f32>,
+//     average_player_speed: f32,
+// }
 
 pub struct RenderUpdates {
     paths: bool,
@@ -131,10 +138,10 @@ impl RenderUpdates {
     }
 }
 
-struct GlobalState {
+pub struct GlobalState {
     pathlog: PathLog,
     config: ConfigState,
-    egui: UIState,
+    ui_state: UIState,
     events: VecDeque<UIEvent>,
     updates: RenderUpdates,
 }
@@ -144,7 +151,7 @@ impl GlobalState {
         GlobalState {
             pathlog: PathLog::init(),
             config: ConfigState::init(),
-            egui: UIState::init(),
+            ui_state: UIState::init(),
             events: VecDeque::new(),
             updates: RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false },
         }
@@ -156,8 +163,8 @@ impl GlobalState {
         while let Some(event) = self.events.pop_front() {
             match event {
                 UIEvent::DeletePath { path_id, collection_id } => {
-                    self.egui.mute_paths.remove(&path_id);
-                    self.egui.solo_paths.remove(&path_id);
+                    self.ui_state.mute_paths.remove(&path_id);
+                    self.ui_state.solo_paths.remove(&path_id);
                     self.pathlog.remove(path_id, collection_id);
                     self.updates.paths = true;
                 }
@@ -172,7 +179,7 @@ impl GlobalState {
                 }
                 UIEvent::SpawnTrigger { index, position, rotation } => {
                      if self.pathlog.is_empty() {
-                        self.pathlog.create_trigger(index, position, rotation, self.config.trigger_size[index]);
+                        self.pathlog.create_trigger(index, position, rotation, self.config.trigger_sizes[index]);
                         self.events.push_back(UIEvent::SpawnTeleport { index });
                     }
                     else {
@@ -183,8 +190,8 @@ impl GlobalState {
                     self.pathlog.start();
                 }
                 UIEvent::StopRecording => {
-                    self.egui.mute_paths.insert(self.pathlog.recording_path.id(), false);
-                    self.egui.solo_paths.insert(self.pathlog.recording_path.id(), false);
+                    self.ui_state.mute_paths.insert(self.pathlog.recording_path.id(), false);
+                    self.ui_state.solo_paths.insert(self.pathlog.recording_path.id(), false);
                     self.pathlog.stop();
                     self.updates.paths = true;
                 }
@@ -196,9 +203,9 @@ impl GlobalState {
                 }
                 UIEvent::CreateCollection => {
                     let new_collection = PathCollection::new(DEFAULT_COLLECTION_NAME.to_string());
-                    self.egui.mute_collections.insert(new_collection.id(), false);
-                    self.egui.solo_collections.insert(new_collection.id(), false);
-                    self.egui.selected_paths.insert(new_collection.id(), Vec::new());
+                    self.ui_state.mute_collections.insert(new_collection.id(), false);
+                    self.ui_state.solo_collections.insert(new_collection.id(), false);
+                    self.ui_state.selected_paths.insert(new_collection.id(), Vec::new());
                     self.pathlog.path_collections.push(new_collection);
                 }
                 UIEvent::RenameCollection { id, mut new_name } => {
@@ -213,12 +220,12 @@ impl GlobalState {
                     if let Some(index) = self.pathlog.path_collections.iter().position(|c| c.id() == id) {
 
                         for path in self.pathlog.path_collections[index].paths() {
-                            self.egui.mute_paths.remove(&path.id());
-                            self.egui.solo_paths.remove(&path.id());
+                            self.ui_state.mute_paths.remove(&path.id());
+                            self.ui_state.solo_paths.remove(&path.id());
                         }
 
-                        self.egui.mute_collections.remove(&id);
-                        self.egui.solo_collections.remove(&id);
+                        self.ui_state.mute_collections.remove(&id);
+                        self.ui_state.solo_collections.remove(&id);
                         self.pathlog.path_collections.remove(index);
                         self.updates.paths = true;
                     }
@@ -263,32 +270,32 @@ impl GlobalState {
                     }
                 }
                 UIEvent::SaveComparison => {
-                    if self.egui.file_path_rx.is_none() {
+                    if self.ui_state.file_path_rx.is_none() {
                         let (tx, rx) = mpsc::channel();
                         thread::spawn(move || {
                                 tx.send(FileDialog::new().show_save_single_file()).unwrap();
                         });
-                        self.egui.file_path_rx = Some(RX::Save { rx });
+                        self.ui_state.file_path_rx = Some(RX::Save { rx });
                         loop_events.push_back(UIEvent::SaveComparison);
                     }
-                    else if let Some(RX::Save { rx }) = &self.egui.file_path_rx {
+                    else if let Some(RX::Save { rx }) = &self.ui_state.file_path_rx {
                         if let Ok(dialog_result) = rx.try_recv() {
                             if let Ok(Some(path)) = dialog_result { self.pathlog.save_comparison(path.to_str().unwrap().to_string()); }
-                            self.egui.file_path_rx = None;
+                            self.ui_state.file_path_rx = None;
                         }
                         else { loop_events.push_back(UIEvent::SaveComparison); }
                     }
                 }
                 UIEvent::LoadComparison => {
-                    if self.egui.file_path_rx.is_none() {
+                    if self.ui_state.file_path_rx.is_none() {
                         let (tx, rx) = mpsc::channel();
                         thread::spawn(move || {
                             tx.send(FileDialog::new().show_open_single_file()).unwrap();
                         });
-                        self.egui.file_path_rx = Some(RX::Load { rx });
+                        self.ui_state.file_path_rx = Some(RX::Load { rx });
                         loop_events.push_back(UIEvent::LoadComparison);
                     }
-                    else if let Some(RX::Load { rx }) = &self.egui.file_path_rx {
+                    else if let Some(RX::Load { rx }) = &self.ui_state.file_path_rx {
                         if let Ok(dialog_result) = rx.try_recv() {
                             if let Ok(Some(path)) = dialog_result {
                                 if let Err(e) = self.pathlog.load_comparison(path.to_str().unwrap().to_string()) {
@@ -296,25 +303,25 @@ impl GlobalState {
                                     continue;
                                 }
 
-                                self.egui.mute_collections.clear();
-                                self.egui.solo_collections.clear();
-                                self.egui.selected_paths.clear();
-                                self.egui.mute_paths.clear();
-                                self.egui.solo_paths.clear();
+                                self.ui_state.mute_collections.clear();
+                                self.ui_state.solo_collections.clear();
+                                self.ui_state.selected_paths.clear();
+                                self.ui_state.mute_paths.clear();
+                                self.ui_state.solo_paths.clear();
 
                                 for collection in &self.pathlog.path_collections {
-                                    self.egui.mute_collections.insert(collection.id(), false);
-                                    self.egui.solo_collections.insert(collection.id(), false);
-                                    self.egui.selected_paths.insert(collection.id(), Vec::new());
+                                    self.ui_state.mute_collections.insert(collection.id(), false);
+                                    self.ui_state.solo_collections.insert(collection.id(), false);
+                                    self.ui_state.selected_paths.insert(collection.id(), Vec::new());
 
                                     for path in collection.paths() {
-                                        self.egui.mute_paths.insert(path.id(), false);
-                                        self.egui.solo_paths.insert(path.id(), false);
+                                        self.ui_state.mute_paths.insert(path.id(), false);
+                                        self.ui_state.solo_paths.insert(path.id(), false);
                                     }
                                 }
 
                                 if let Some(start_trigger) = self.pathlog.main_triggers[0] {
-                                    self.egui.teleports[0] = Some(Teleport {
+                                    self.ui_state.teleports[0] = Some(Teleport {
                                         location: start_trigger.position,
                                         rotation: start_trigger.rotation(),
                                         camera_rotation: None,
@@ -322,24 +329,32 @@ impl GlobalState {
                                 }
 
                                 if let Some(end_trigger) = self.pathlog.main_triggers[1] {
-                                    self.egui.teleports[1] = Some(Teleport {
+                                    self.ui_state.teleports[1] = Some(Teleport {
                                         location: end_trigger.position,
                                         rotation: end_trigger.rotation(),
                                         camera_rotation: None,
                                     })
                                 }
                             }
-                            self.egui.file_path_rx = None;
+                            self.ui_state.file_path_rx = None;
                             self.updates.paths = true;
                         }
                         else { loop_events.push_back(UIEvent::LoadComparison); }
                     }
                 }
+                UIEvent::SaveConfig => {
+                    self.config.write("celestial.ini".to_string());
+                },
+                UIEvent::LoadConfig => {
+                    if let Err(e) = self.config.read("celestial.ini".to_string()) {
+                        println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
+                    }
+                },
                 UIEvent::SelectPath { path_id, collection_id, modifier } => {
                     let collection = &self.pathlog.path_collections[self.pathlog.path_collections.iter().position(|c| c.id() == collection_id).unwrap()];
                     let path = collection.get_path(path_id).unwrap();
 
-                    let selected = self.egui.selected_paths.get_mut(&collection.id()).unwrap();
+                    let selected = self.ui_state.selected_paths.get_mut(&collection.id()).unwrap();
 
                     match modifier {
                         1 => {
@@ -364,7 +379,7 @@ impl GlobalState {
                     self.updates.paths = true;
                 }
                 UIEvent::Teleport { index } => {
-                    if let Some(teleport) = &self.egui.teleports[index] {
+                    if let Some(teleport) = &self.ui_state.teleports[index] {
                         gamedata::teleport_player(teleport.location, teleport.rotation);
                         if let Some(cam_rotation) = teleport.camera_rotation {
                             gamedata::set_camera_rotation(cam_rotation);
@@ -374,7 +389,7 @@ impl GlobalState {
                 }
                 UIEvent::SpawnTeleport { index } => {
                     if index > 1 { continue; }
-                    self.egui.teleports[index] = Some(Teleport {
+                    self.ui_state.teleports[index] = Some(Teleport {
                         location: gamedata::get_player_position(),
                         rotation: gamedata::get_player_rotation(),
                         camera_rotation: Some(gamedata::get_camera_rotation()),
@@ -385,18 +400,6 @@ impl GlobalState {
 
         self.events.append(&mut loop_events);
     }
-}
-
-pub struct DebugState {
-    frame_time: u64,
-    copy_time: u64,
-
-    frame_count: usize,
-    // calc_avg: bool,
-    last_frame: Instant,
-    last_player_pos: Vec3,
-    player_speeds: Vec<f32>,
-    average_player_speed: f32,
 }
 
 unsafe fn init_globals(this: &IDXGISwapChain) {
@@ -436,28 +439,10 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
 }
 
 extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT {
-    let frame_start = Instant::now();
+    // let frame_start = Instant::now();
 
     unsafe {
         init_globals(&this);
-
-        // let debug = DEBUG_STATE.as_mut().unwrap();
-
-        // let elapsed = debug.last_frame.elapsed().as_secs_f32();
-
-        // let speed = (Vec3::from_array(gamedata::get_player_position()) - debug.last_player_pos).length() / elapsed;
-        // debug.player_speeds[debug.frame_count % 60] = speed;
-        // // debug.player_speeds.push(speed);
-        // // if debug.calc_avg {
-        // if debug.frame_count % 10 == 0 {
-        //     debug.average_player_speed = debug.player_speeds.iter().sum::<f32>() / debug.player_speeds.len() as f32;
-        //     // debug.player_speeds.clear();
-        //     // debug.calc_avg = false;
-        // }
-
-        // debug.last_player_pos = gamedata::get_player_position().into();
-        // debug.last_frame = Instant::now();
-        // debug.frame_count += 1;
 
         if let Ok(mut state) = GLOBAL_STATE.lock() {
             if gamedata::get_is_loading() {
@@ -469,28 +454,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             state.pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
         }
 
-        // let view_proj = gamedata::get_view_matrix();
-
-
-        // let mut global_state = GLOBAL_STATE.as_mut().unwrap();
-
         if let Some(pintar) = PINTAR.as_mut() {
-            // DEBUG_STATE.as_mut().unwrap().copy_time = 0;
-
-            // let egui = &mut global_state.egui;
-            // let pathlog = &mut global_state.pathlog;
-            // let config = &global_state.config;
-            // let updates = &mut global_state.updates;
-            // let events = &mut GLOBAL_STATE.as_mut().unwrap().events;
-
-            // if gamedata::get_is_loading() {
-            //     pathlog.pause();
-            // } else {
-            //     pathlog.unpause();
-            // }
-
-            // pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation(), updates);
-
             let view_proj = gamedata::get_view_matrix();
 
             pintar.set_default_view_proj(view_proj);
@@ -510,25 +474,16 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
             pintar.clear_vertex_group(SHAPES_GROUP.to_string());
             render_custom_shapes(pintar);
-            // render_custom_shapes(pintar, egui);
 
             pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
             render_teleports(pintar);
-            // render_teleports(pintar, egui, config);
 
             render_all_paths(pintar);
-            // if updates.paths {
-            //     pintar.clear_vertex_group("default_line".to_string());
-            //     render_all_paths(pintar, egui, config, pathlog);
-            //     updates.paths = false;
-            // }
 
             pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
             render_triggers(pintar);
-            // render_triggers(pintar, config, pathlog);
 
             pintar.render();
-            // pintar.clear_all_vertex_groups();
         }
 
         if let Some(dx_renderer) = EGUI_RENDERER.as_mut() {
@@ -537,18 +492,13 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 None => egui::RawInput::default(),
             };
 
-            // let mut global_state = GLOBAL_STATE.as_mut().unwrap();
-
             ui::check_input(&input);
-            // ui::check_input(&input, &mut global_state.egui, &mut global_state.config);
-
-            // let mut global_state = GLOBAL_STATE.lock().unwrap();
 
             // i have to pass in some reference idk
             let mut nothing = 0;
 
             dx_renderer
-                .paint(&this, &mut nothing, input.clone(), |ctx, s| {
+                .paint(&this, &mut nothing, input.clone(), |ctx, _| {
                     // ctx.set_zoom_factor(state.config.zoom);
 
                     // my best attempt at getting a fucking window position but ofc it's private
@@ -564,7 +514,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                             IS_POINTER_OVER_EGUI = ctx.is_pointer_over_area();
                             EGUI_WANTS_KEYBOARD_INPUT = ctx.wants_keyboard_input();
                             ui::draw_ui(ui);
-                            // ui::draw_ui(ui, &mut state.egui, &mut state.config, &mut state.pathlog);
                         });
 
                     egui::Window::new("Timer")
@@ -573,7 +522,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
                             ui::draw_timer(ui);
-                            // ui::draw_timer(ui, &mut state.config, &mut state.pathlog);
                         });
 
                     #[cfg(debug_assertions)] {
@@ -588,12 +536,9 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 .expect("successful render");
 
             if let Ok(mut state) = GLOBAL_STATE.lock() {
-                // state.egui.process_events(&mut state);
                 state.process_events();
             }
         }
-
-        // DEBUG_STATE.as_mut().unwrap().frame_time = frame_start.elapsed().as_micros() as u64;
     }
 
     // Call and return the result of the original method.
@@ -609,18 +554,31 @@ fn render_path(pintar: &mut Pintar, path: &Path, color: [f32; 4], thickness: f32
 
 // fn render_all_paths(pintar: &mut Pintar, egui: &UIState, config: &ConfigState, pathlog: &PathLog) {
 fn render_all_paths(pintar: &mut Pintar) {
+    if !GLOBAL_STATE.lock().unwrap().updates.paths { return; }
+
     let state = GLOBAL_STATE.lock().unwrap();
 
-    if !state.updates.paths { return; }
+    let path_collections = state.pathlog.path_collections.clone();
+
+    let fast_color = state.config.fast_color;
+    let slow_color = state.config.slow_color;
+    let gold_color = state.config.gold_color;
+    let select_color = state.config.select_color;
+
+    let solo_collections = state.ui_state.solo_collections.clone();
+    let solo_paths = state.ui_state.solo_paths.clone();
+    let mute_paths = state.ui_state.mute_paths.clone();
+
+    drop(state);
 
     pintar.clear_vertex_group("default_line".to_string());
 
     let mut visible_collection = PathCollection::new("Visible".to_string());
     let mut selected : Vec<Uuid> = Vec::new();
 
-    for collection in &state.pathlog.path_collections {
+    for collection in &path_collections {
         let mut visible = true;
-        for v in state.egui.solo_collections.values() {
+        for v in solo_collections.values() {
             if *v {visible = false;}
         }
 
@@ -631,7 +589,7 @@ fn render_all_paths(pintar: &mut Pintar) {
 
             visible_collection.add(path.clone(), None);
 
-            if state.egui.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
+            if GLOBAL_STATE.lock().unwrap().ui_state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
                 selected.push(path.id());
             }
         }
@@ -642,25 +600,25 @@ fn render_all_paths(pintar: &mut Pintar) {
         let path = &visible_paths[i];
 
         let mut visible = true;
-        for v in state.egui.solo_paths.values() {
+        for v in solo_paths.values() {
             if *v {visible = false;}
         }
-        if state.egui.solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-        if state.egui.mute_paths.get(&path.id()) == Some(&true) { visible = false; }
+        if solo_paths.get(&path.id()) == Some(&true) { visible = true; }
+        if mute_paths.get(&path.id()) == Some(&true) { visible = false; }
         if !visible { continue; }
 
-        let fast = state.config.fast_color;
-        let slow = state.config.slow_color;
+        let fast = fast_color;
+        let slow = slow_color;
         let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
         let mut color: [f32; 4];
         let thick: f32;
 
         if i == 0 {
-            color = state.config.gold_color;
+            color = gold_color;
             thick = 0.04;
         }
         else if visible_paths.len() == 2 {
-            color = state.config.slow_color;
+            color = slow_color;
             thick = 0.02;
         }
         else {
@@ -676,35 +634,47 @@ fn render_all_paths(pintar: &mut Pintar) {
         }
 
         if selected.contains(&path.id()) {
-            color = state.config.select_color;
+            color = select_color;
         }
 
         render_path(pintar, &path, color, thick);
     }
 }
 
-// fn render_triggers(pintar: &mut Pintar, config: &ConfigState, pathlog: &PathLog) {
 fn render_triggers(pintar: &mut Pintar) {
     let state = GLOBAL_STATE.lock().unwrap();
 
-    for collider in &state.pathlog.checkpoint_triggers {
-        pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(state.config.checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+    let checkpoint_triggers = state.pathlog.checkpoint_triggers.clone();
+    let main_triggers = state.pathlog.main_triggers;
+
+    let checkpoint_color = state.config.checkpoint_color;
+    let trigger_colors = state.config.trigger_colors;
+
+    drop(state);
+
+    for collider in &checkpoint_triggers {
+        pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
     }
 
     for i in 0..2 {
-        if let Some(collider) = state.pathlog.main_triggers[i] {
-            pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(state.config.trigger_color[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
+        if let Some(collider) = main_triggers[i] {
+            pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(trigger_colors[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
         }
     }
 }
 
-// fn render_teleports(pintar: &mut Pintar, egui: &UIState, config: &ConfigState) {
 fn render_teleports(pintar: &mut Pintar) {
     let state = GLOBAL_STATE.lock().unwrap();
 
-    if let Some(teleport) = &state.egui.teleports[0] {
+    let trigger_colors = state.config.trigger_colors;
+
+    let teleports = state.ui_state.teleports;
+
+    drop(state);
+
+    if let Some(teleport) = &teleports[0] {
         let pos = teleport.location;
-        let mut color = state.config.trigger_color[0];
+        let mut color = trigger_colors[0];
         // color[3] = 0.5;
         // pos[1] += 1.0;
         pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
@@ -712,9 +682,9 @@ fn render_teleports(pintar: &mut Pintar) {
         pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
     }
 
-    if let Some(teleport) = &state.egui.teleports[1] {
+    if let Some(teleport) = &teleports[1] {
         let pos = teleport.location;
-        let mut color = state.config.trigger_color[1];
+        let mut color = trigger_colors[1];
         // color[3] = 0.5;
         // pos[1] += 1.0;
         pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
@@ -727,7 +697,11 @@ fn render_teleports(pintar: &mut Pintar) {
 fn render_custom_shapes(pintar: &mut Pintar) {
     let state = GLOBAL_STATE.lock().unwrap();
 
-    for shape in &state.egui.custom_shapes {
+    let custom_shapes = state.ui_state.custom_shapes.clone();
+
+    drop(state);
+
+    for shape in &custom_shapes {
         if shape.1 { continue; }
         match shape.0.shape_type {
             ShapeType::Box => {
@@ -957,7 +931,6 @@ fn main() {
     log_setup();
 
     unsafe {
-        // GLOBAL_STATE = Some(GlobalState::init());
         // let mut debug = DebugState{
         //     frame_time: 0,
         //     copy_time: 0,

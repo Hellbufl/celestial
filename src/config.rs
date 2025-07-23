@@ -32,11 +32,11 @@ pub struct ConfigState {
 	pub spawn_teleport_keybinds: [Shortcut; 2],
 	pub spawn_checkpoint_keybind: Shortcut,
 
-	pub trigger_size: [[f32; 3]; 2],
+	pub trigger_sizes: [[f32; 3]; 2],
     pub timer_size: f32,
     pub timer_position: [f32; 2],
 
-	pub trigger_color: [[f32; 4]; 2],
+	pub trigger_colors: [[f32; 4]; 2],
 	pub checkpoint_color: [f32; 4],
     pub fast_color: [f32; 4],
     pub slow_color: [f32; 4],
@@ -70,11 +70,11 @@ impl ConfigState {
             ],
             spawn_checkpoint_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::C}), None),
 
-            trigger_size: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+            trigger_sizes: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
             timer_size: 24.,
             timer_position: [400f32, 50f32],
 
-            trigger_color: [[0.0, 0.0, 0.0, 0.8], [1.0, 1.0, 1.0, 0.8]],
+            trigger_colors: [[0.0, 0.0, 0.0, 0.8], [1.0, 1.0, 1.0, 0.8]],
             checkpoint_color: [0.5, 0.5, 0.5, 0.5],
             fast_color: [0.4, 1.0, 0.2, 0.8],
             slow_color: [1.0, 0.1, 0.2, 0.8],
@@ -116,13 +116,13 @@ impl ConfigState {
             set_if_ok!(self.spawn_teleport_keybinds[1], Shortcut::from_string(section.get("spawn_teleport_2_keybind").unwrap_or("")));
             set_if_ok!(self.spawn_checkpoint_keybind, Shortcut::from_string(section.get("spawn_checkpoint_keybind").unwrap_or("")));
 
-            set_if_ok!(self.trigger_size[0], serde_json::from_str(section.get("start_trigger_size").unwrap_or("")));
-            set_if_ok!(self.trigger_size[1], serde_json::from_str(section.get("end_trigger_size").unwrap_or("")));
+            set_if_ok!(self.trigger_sizes[0], serde_json::from_str(section.get("start_trigger_size").unwrap_or("")));
+            set_if_ok!(self.trigger_sizes[1], serde_json::from_str(section.get("end_trigger_size").unwrap_or("")));
             set_if_ok!(self.timer_size, serde_json::from_str(section.get("timer_size").unwrap_or("")));
             set_if_ok!(self.timer_position, serde_json::from_str(section.get("timer_position").unwrap_or("")));
 
-            set_if_ok!(self.trigger_color[0], serde_json::from_str(section.get("start_trigger_color").unwrap_or("")));
-            set_if_ok!(self.trigger_color[1], serde_json::from_str(section.get("end_trigger_color").unwrap_or("")));
+            set_if_ok!(self.trigger_colors[0], serde_json::from_str(section.get("start_trigger_color").unwrap_or("")));
+            set_if_ok!(self.trigger_colors[1], serde_json::from_str(section.get("end_trigger_color").unwrap_or("")));
             set_if_ok!(self.checkpoint_color, serde_json::from_str(section.get("checkpoint_color").unwrap_or("")));
             set_if_ok!(self.fast_color, serde_json::from_str(section.get("fast_color").unwrap_or("")));
             set_if_ok!(self.slow_color, serde_json::from_str(section.get("slow_color").unwrap_or("")));
@@ -163,13 +163,13 @@ impl ConfigState {
             .set("spawn_teleport_2_keybind", self.spawn_teleport_keybinds[1].to_string())
             .set("spawn_checkpoint_keybind", self.spawn_checkpoint_keybind.to_string())
 
-            .set("start_trigger_size", format!("{:?}", self.trigger_size[0]))
-            .set("end_trigger_size", format!("{:?}", self.trigger_size[1]))
+            .set("start_trigger_size", format!("{:?}", self.trigger_sizes[0]))
+            .set("end_trigger_size", format!("{:?}", self.trigger_sizes[1]))
             .set("timer_size", format!("{:?}", self.timer_size))
             .set("timer_position", format!("{:?}", self.timer_position))
 
-            .set("start_trigger_color", format!("{:?}", self.trigger_color[0]))
-            .set("end_trigger_color", format!("{:?}", self.trigger_color[1]))
+            .set("start_trigger_color", format!("{:?}", self.trigger_colors[0]))
+            .set("end_trigger_color", format!("{:?}", self.trigger_colors[1]))
             .set("checkpoint_color", format!("{:?}", self.checkpoint_color))
             .set("fast_color", format!("{:?}", self.fast_color))
             .set("slow_color", format!("{:?}", self.slow_color))
