@@ -1219,7 +1219,6 @@ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 [[package]]
 name = "pintar"
 version = "0.1.0"
-source = "git+https://github.com/Hellbufl/pintar.git#1c25521b228f2f484842bcb766d4ff755c56c321"
 dependencies = [
  "directx_math",
  "tracing",

@@ -20,8 +20,8 @@ lazy_static = "1.5.0"
 native-dialog = "0.7.0"
 ocular = { git = "https://github.com/WoefulWolf/ocular-rs.git" }
 once_cell = "1.20.3"
-pintar = { git = "https://github.com/Hellbufl/pintar.git" }
-# pintar = { path = "../pintar" }
+# pintar = { git = "https://github.com/Hellbufl/pintar.git" }
+pintar = { path = "../pintar" }
 retour = "0.3"
 rust-ini = "0.21.1"
 serde = { version = "1.0.208", features = ["derive"] }

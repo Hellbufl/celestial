@@ -69,7 +69,10 @@ impl PathLog {
         pathlog
     }
 
-	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3], updates: &mut RenderUpdates) {
+	// pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3], updates: &mut RenderUpdates) {
+	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3]) -> RenderUpdates {
+        let mut updates = RenderUpdates::new();
+
         let player_up = Mat3::from_euler(glam::EulerRot::XYZ, player_rot[0], player_rot[1], player_rot[2]) * Vec3::Y;
         let player_center = [
             player_pos[0] + player_up.x,
@@ -98,11 +101,13 @@ impl PathLog {
             }
         }
 
-        if !self.recording || self.paused { return; }
+        if !self.recording || self.paused { return updates; }
 
         // TODO: checkpoint logic
 
 	    self.recording_path.add_node(player_center);
+
+        updates
     }
 
 	pub fn start(&mut self) {

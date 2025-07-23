@@ -1,16 +1,16 @@
 ### Todo
 
-- scale ui by window resolution
+- replace static mut refs with mutexes or some shit !
 - compare collections
 
-- limit drawn lines per collection
-- cleaner error handling (wip)
-- replace static mut refs with mutexes or some shit !
-- get some cool screenshots for the github
-- move paths between collections (copy aswell?)
-- move collections
 - save timer position
+- scale ui by window resolution
+- copy / move paths between collections
+- move collections
+- get some cool screenshots for the github
 - popup messages
+- cleaner error handling (wip)
+- limit drawn lines per collection ?
 - fix all the bugs :)
 
 ### Suggested Features / Changes
