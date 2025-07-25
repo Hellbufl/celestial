@@ -5,15 +5,19 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    FileReadFailed(),
-    FileDecodeFailed(),
+    IO {
+        msg: String,
+    },
+    Binary {
+        msg: String,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let err_msg = match self {
-            Error::FileReadFailed() => "Failed to read file!",
-            Error::FileDecodeFailed() => "Failed to decode file!",
+            Error::IO{ msg } => format!("Failed to read/write file!: {}", msg),
+            Error::Binary{ msg } => format!("Failed to decode file!: {}", msg),
         };
         write!(f, "{err_msg}")
     }
@@ -24,13 +28,13 @@ impl fmt::Display for Error {
 // }
 
 impl From<std::io::Error> for Error {
-    fn from(_error: std::io::Error) -> Self {
-        Error::FileReadFailed()
+    fn from(error: std::io::Error) -> Self {
+        Error::IO{ msg: error.to_string() }
     }
 }
 
 impl From<serde_binary::Error> for Error {
-    fn from(_error: serde_binary::Error) -> Self {
-        Error::FileDecodeFailed()
+    fn from(error: serde_binary::Error) -> Self {
+        Error::Binary{ msg: error.to_string() }
     }
 }

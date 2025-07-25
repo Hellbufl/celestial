@@ -7,11 +7,11 @@ use egui_keybind::Keybind;
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, GlobalState, GLOBAL_STATE, RX};
+use crate::{gamedata, GLOBAL_STATE, RX};
 
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
 
 #[derive(Clone, Copy)]
@@ -242,30 +242,38 @@ pub fn check_input(input: &egui::RawInput) {
         // }
     }
 
-    if let Ok(mut state) = GLOBAL_STATE.lock() {
-        state.ui_state.modifier = modifier;
-        state.events.append(&mut events);
-    }
+    let mut state = GLOBAL_STATE.lock().unwrap();
+
+    state.ui_state.modifier = modifier;
+    state.events.append(&mut events);
 }
 
-// pub fn draw_ui(ui: &mut egui::Ui, state: &mut UIState, config: &mut ConfigState, state.pathlog: &mut PathLog) {
 pub fn draw_ui(ui: &mut egui::Ui) {
-    if let Ok(mut state) = GLOBAL_STATE.lock() {
-        ui.visuals_mut().selection.bg_fill = state.config.accent_colors[0];
+    let state = GLOBAL_STATE.lock().unwrap();
 
-        ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
-        // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
+    let accent_colors = state.config.accent_colors;
+    let shapes_enabled = state.config.shapes_enabled;
 
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-            ui.selectable_value(&mut state.ui_state.tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
-            ui.selectable_value(&mut state.ui_state.tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
-            if state.config.custom_shapes {
-                ui.selectable_value(&mut state.ui_state.tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
-            }
-            ui.selectable_value(&mut state.ui_state.tab, Tab::Config, egui::RichText::new("Config").strong());
-            ui.selectable_value(&mut state.ui_state.tab, Tab::Credits, egui::RichText::new("Credits").strong());
-        });
-    }
+    let mut tab = state.ui_state.tab;
+
+    drop(state);
+
+    ui.visuals_mut().selection.bg_fill = accent_colors[0];
+
+    ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
+    // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
+
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+        ui.selectable_value(&mut tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
+        ui.selectable_value(&mut tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
+        if shapes_enabled {
+            ui.selectable_value(&mut tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
+        }
+        ui.selectable_value(&mut tab, Tab::Config, egui::RichText::new("Config").strong());
+        ui.selectable_value(&mut tab, Tab::Credits, egui::RichText::new("Credits").strong());
+    });
+
+    GLOBAL_STATE.lock().unwrap().ui_state.tab = tab;
 
     // ui.separator();
 
@@ -283,7 +291,6 @@ pub fn draw_ui(ui: &mut egui::Ui) {
     draw_credits_tab(ui);
 }
 
-// pub fn draw_timer(ui: &mut egui::Ui, config: &mut ConfigState, state.pathlog: &mut PathLog) {
 pub fn draw_timer(ui: &mut egui::Ui) {
     let time = GLOBAL_STATE.lock().unwrap().pathlog.time();
     let timer_size = GLOBAL_STATE.lock().unwrap().config.timer_size;
@@ -294,7 +301,6 @@ pub fn draw_timer(ui: &mut egui::Ui) {
     ).selectable(false));
 }
 
-// fn draw_comparison_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &mut ConfigState, state.pathlog: &PathLog) {
 fn draw_comparison_tab(ui: &mut egui::Ui) {
     if GLOBAL_STATE.lock().unwrap().ui_state.tab != Tab::Comparison { return; }
 
@@ -513,26 +519,6 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     state.events.append(&mut events);
 }
 
-// fn draw_paths_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &ConfigState, state.pathlog: &PathLog) {
-//     if state.ui_state.tab != Tab::Paths { return; }
-//     ui.separator();
-
-//     egui::Grid::new("paths_grid")
-//     .num_columns(2)
-//     .spacing([40.0, 4.0])
-//     .striped(true)
-//     .show(ui, |ui| {
-//         if ui.interact_bg(egui::Sense::click()).clicked() {
-//             state.ui_state.selected_paths.get_mut(&state.pathlog.direct_paths.id()).unwrap().clear();
-//         }
-
-//         for path in state.pathlog.direct_paths.paths() {
-//             draw_path(ui, state.ui_state, config, state.pathlog, path, &state.pathlog.direct_paths);
-//         }
-//     });
-// }
-
-// fn draw_path(ui: &mut egui::Ui, state: &mut GlobalState, path: usize, collection: usize) {
 fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let state = GLOBAL_STATE.lock().unwrap();
 
@@ -664,34 +650,23 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     state.events.append(&mut events);
 }
 
-// fn draw_triggers_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, _config: &mut ConfigState, state.pathlog: &mut PathLog) {
 fn draw_triggers_tab(ui: &mut egui::Ui) {
-    let mut state = GLOBAL_STATE.lock().unwrap();
+    if GLOBAL_STATE.lock().unwrap().ui_state.tab != Tab::Triggers { return; }
 
-    if state.ui_state.tab != Tab::Triggers { return; }
+    let state = GLOBAL_STATE.lock().unwrap();
+
+    let checkpoint_triggers_len = state.pathlog.checkpoint_triggers.len();
+
+    let mut delete_mode = state.ui_state.delete_mode;
+
+    drop(state);
+
     ui.separator();
 
     let mut delete_list: Vec<Uuid> = Vec::new();
 
-    for t in 0..(state.pathlog.checkpoint_triggers.len() + 2) {
-        draw_trigger(ui, &mut state, t, &mut delete_list);
-    }
-
-    // if let Some(collider) = &mut state.pathlog.main_triggers[0] {
-    //     draw_trigger(ui, &mut state.ui_state, collider, &mut delete_list);
-    // }
-
-    // for trigger in &mut state.pathlog.checkpoint_triggers {
-    //     draw_trigger(ui, &mut state.ui_state, trigger, &mut delete_list);
-    // }
-
-    // if let Some(collider) = &mut state.pathlog.main_triggers[1] {
-    //     draw_trigger(ui, &mut state.ui_state, collider, &mut delete_list);
-    // }
-
-    for id in delete_list {
-        let pos = state.pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
-        if let Some(i) = pos { state.pathlog.checkpoint_triggers.remove(i); }
+    for t in 0..(checkpoint_triggers_len + 2) {
+        draw_trigger(ui, t, &mut delete_list);
     }
 
     egui::Grid::new("util")
@@ -721,7 +696,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    state.ui_state.delete_mode ^= true;
+                    delete_mode ^= true;
                 }
                 // if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                 //     state.pathlog.checkpoint_triggers.push(BoxCollider::new(pos, rotation, size));
@@ -729,18 +704,32 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
             });
             ui.end_row();
         });
+
+    let mut state = GLOBAL_STATE.lock().unwrap();
+
+    for id in delete_list {
+        let pos = state.pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
+        if let Some(i) = pos { state.pathlog.checkpoint_triggers.remove(i); }
+    }
+
+    state.ui_state.delete_mode = delete_mode;
 }
 
-// fn draw_trigger(ui: &mut egui::Ui, state.ui_state: &mut UIState, trigger: &mut BoxCollider, delete_list: &mut Vec<Uuid>) {
-fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
-    let trigger = match trigger_index {
+fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
+    let state = GLOBAL_STATE.lock().unwrap();
+
+    let mut trigger = match trigger_index {
         0 | 1 => {
-            let t = &mut state.pathlog.main_triggers[trigger_index];
+            let t = state.pathlog.main_triggers[trigger_index];
             if t.is_none() { return; }
-            t.as_mut().unwrap()
+            t.unwrap()
         },
-        _ => &mut state.pathlog.checkpoint_triggers[trigger_index - 2],
+        _ => state.pathlog.checkpoint_triggers[trigger_index - 2],
     };
+
+    let delete_mode = state.ui_state.delete_mode;
+
+    drop(state);
 
     egui::Grid::new(trigger.id().to_string() + "buttons")
     .num_columns(2)
@@ -760,7 +749,7 @@ fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            if state.ui_state.delete_mode {
+            if delete_mode {
                 if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     delete_list.push(trigger.id());
                 }
@@ -822,6 +811,13 @@ fn draw_trigger(ui: &mut egui::Ui, state: &mut GlobalState, trigger_index: usize
     // });
 
     ui.end_row();
+
+    let mut state = GLOBAL_STATE.lock().unwrap();
+
+    match trigger_index {
+        0 | 1 => state.pathlog.main_triggers[trigger_index] = Some(trigger),
+        _ => state.pathlog.checkpoint_triggers[trigger_index - 2] = trigger,
+    };
 }
 
 fn draw_config_tab(ui: &mut egui::Ui) {
@@ -1127,9 +1123,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
 // fn draw_credits_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState) {
 fn draw_credits_tab(ui: &mut egui::Ui) {
-    let state = GLOBAL_STATE.lock().unwrap();
-
-    if state.ui_state.tab != Tab::Credits { return; }
+    if GLOBAL_STATE.lock().unwrap().ui_state.tab != Tab::Credits { return; }
 
     ui.set_min_width(300.0);
     ui.separator();
@@ -1174,7 +1168,6 @@ fn draw_credits_tab(ui: &mut egui::Ui) {
         });
 }
 
-// fn draw_custom_shapes_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState, config: &mut ConfigState) {
 fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 

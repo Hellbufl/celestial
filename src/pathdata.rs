@@ -8,15 +8,7 @@ use uuid::Uuid;
 
 use crate::error::Error;
 
-const FILE_VERSION : &str = "0.5";
-
-#[derive(Clone)]
-#[derive(Serialize, Deserialize)]
-pub struct OldPath {
-	id: Uuid,
-	time: u64,
-    nodes: Vec<[f32; 3]>,
-}
+const CURRENT_FILE_VERSION : &str = "0.5";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
@@ -72,10 +64,6 @@ impl Path {
         else { None }
     }
 
-    // pub fn set_time(&mut self, new_time: u64) {
-    //     self.time = new_time;
-    // }
-
     pub fn end_segment(&mut self, time: u64) {
         self.segments.push(Vec::new());
         self.times.push(time);
@@ -118,16 +106,16 @@ impl Path {
     //     self.times[index] = 0;
     // }
 
-    pub fn from_file(file_path: String) -> Path {
-        let file_content = fs::read(file_path).expect("[Celestial][PathLog] Error: failed to read path file!");
-        serde_binary::from_vec(file_content, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to decode path file!")
-    }
+    // pub fn from_file(file_path: String) -> Path {
+    //     let file_content = fs::read(file_path).expect("[Celestial][PathLog] Error: failed to read path file!");
+    //     serde_binary::from_vec(file_content, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to decode path file!")
+    // }
 
-	pub fn to_file(&mut self, file_path: String) {
-        fs::write(
-            file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize path file!")
-        ).expect("[Celestial][PathLog] Error: failed to write path file!");
-    }
+	// pub fn to_file(&mut self, file_path: String) {
+    //     fs::write(
+    //         file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize path file!")
+    //     ).expect("[Celestial][PathLog] Error: failed to write path file!");
+    // }
 }
 
 impl PartialEq for Path {
@@ -204,32 +192,10 @@ pub enum HighPassFilter {
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
-pub struct OldPathCollection {
-    pub id: Uuid,
-    pub name: String,
-    pub paths: Vec<OldPath>,
-}
-
-#[derive(Clone)]
-#[derive(Serialize, Deserialize)]
 pub struct PathCollection {
     id: Uuid,
     pub name: String,
     paths: Vec<Path>,
-}
-
-impl From<OldPathCollection> for PathCollection {
-    fn from(old: OldPathCollection) -> Self {
-        let mut paths = Vec::<Path>::new();
-        for old_path in old.paths {
-            let mut times = Vec::new();
-            let mut segments = Vec::new();
-            times.push(old_path.time);
-            segments.push(old_path.nodes);
-            paths.push(Path { id: old_path.id, times, segments })
-        }
-        PathCollection { id: old.id, name: old.name, paths }
-    }
 }
 
 impl PathCollection {
@@ -244,10 +210,6 @@ impl PathCollection {
     pub fn id(&self) -> Uuid {
         self.id
     }
-
-    // pub fn get_path(&self, index: usize) -> Path {
-    //     self.paths[index].clone()
-    // }
 
     pub fn get_path(&self, id: Uuid) -> Option<&Path> {
         match self.paths.iter().position(|p| p.id() == id) {
@@ -303,12 +265,6 @@ impl PathCollection {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct OldCompFile {
-    pub trigger_data: [[[f32; 3]; 3]; 2],
-    pub collections: Vec<OldPathCollection>,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct CompFile {
     version: String,
     trigger_data: [[[f32; 3]; 3]; 2],
@@ -333,7 +289,7 @@ impl CompFile {
         ];
 
         CompFile {
-            version: FILE_VERSION.into(),
+            version: CURRENT_FILE_VERSION.into(),
             trigger_data,
             collections,
         }
@@ -361,25 +317,102 @@ impl CompFile {
     pub fn from_file(file_path: String) -> Result<CompFile, Error> {
         let file_content = fs::read(file_path)?;
 
-        let version_bytes = FILE_VERSION.as_bytes().to_vec();
-        let header_bytes = vec![vec![3, 0, 0, 0, 7, 0, 0, 0], "version".as_bytes().to_vec(), (version_bytes.len() as u32).to_le_bytes().to_vec(), version_bytes].concat();
+        let mut head : usize = 4;
 
-        if file_content[..header_bytes.len() + 1].iter().zip(&header_bytes).filter(|&(a, b)| a == b).count() == header_bytes.len() {
+        let first_field_length = serde_binary::from_slice::<u32>(&file_content[head..(head + 4)], binary_stream::Endian::Little)? as usize;
+        let first_field_name = serde_binary::from_slice::<String>(&file_content[head..(head + 4 + first_field_length)], binary_stream::Endian::Little)?;
+        head += 4 + first_field_length;
+
+        if first_field_name != "version" {
+            let old_comp_file = serde_binary::from_vec::<CompFile04>(file_content, binary_stream::Endian::Little)?;
+            return Ok(CompFile::from(old_comp_file));
+        }
+
+        let file_version_len = serde_binary::from_slice::<u32>(&file_content[head..(head + 4)], binary_stream::Endian::Little)? as usize;
+        let file_version = serde_binary::from_slice::<String>(&file_content[head..(head + 4 + file_version_len)], binary_stream::Endian::Little)?;
+
+        if file_version == "0.5" {
             Ok(serde_binary::from_vec::<CompFile>(file_content.clone(), binary_stream::Endian::Little)?)
         }
         else {
-            let old_comp_file = serde_binary::from_vec::<OldCompFile>(file_content, binary_stream::Endian::Little)?;
-            let mut collections = Vec::new();
-            for old_collection in old_comp_file.collections {
-                collections.push(PathCollection::from(old_collection));
-            }
-            Ok(CompFile { version: FILE_VERSION.into(), trigger_data: old_comp_file.trigger_data, collections })
+            Err(Error::Binary{ msg: format!("Version {file_version} not compatible.") })
         }
     }
 
-	pub fn to_file(&self, file_path: String) {
-        fs::write(
-            file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize comparison file!")
-        ).expect("[Celestial][PathLog] Error: failed to write comparison file!");
+	pub fn to_file(&self, file_path: String) -> Result<(), Error> {
+        let file_contents = serde_binary::to_vec(self, binary_stream::Endian::Little)?;
+        Ok(fs::write(file_path, file_contents)?)
+
+        // fs::write(
+        //     file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize comparison file!")
+        // ).expect("[Celestial][PathLog] Error: failed to write comparison file!");
     }
+}
+
+// Backwards Compatibility //
+// I'm not sure how to do this properly
+
+#[derive(Serialize, Deserialize)]
+struct OldPath04 {
+	id: Uuid,
+	time: u64,
+    nodes: Vec<[f32; 3]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PathCollection04 {
+    pub id: Uuid,
+    pub name: String,
+    pub paths: Vec<OldPath04>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CompFile04 {
+    pub trigger_data: [[[f32; 3]; 3]; 2],
+    pub collections: Vec<PathCollection04>,
+}
+
+impl From<PathCollection04> for PathCollection {
+    fn from(old: PathCollection04) -> Self {
+        let mut paths = Vec::<Path>::new();
+        for old_path in old.paths {
+            let mut times = Vec::new();
+            let mut segments = Vec::new();
+            times.push(old_path.time);
+            segments.push(old_path.nodes);
+            paths.push(Path { id: old_path.id, times, segments })
+        }
+        PathCollection { id: old.id, name: old.name, paths }
+    }
+}
+
+impl From<CompFile04> for CompFile {
+    fn from(old_comp_file: CompFile04) -> Self {
+        let mut collections = Vec::new();
+        for old_collection in old_comp_file.collections {
+            collections.push(PathCollection::from(old_collection));
+        }
+        CompFile { version: CURRENT_FILE_VERSION.into(), trigger_data: old_comp_file.trigger_data, collections }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Path05 {
+	id: Uuid,
+	times: Vec<u64>,
+    segments: Vec<Vec<[f32; 3]>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PathCollection05 {
+    id: Uuid,
+    pub name: String,
+    paths: Vec<Path05>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CompFile05 {
+    version: String,
+    trigger_data: [[[f32; 3]; 3]; 2],
+    collections: Vec<PathCollection05>,
 }

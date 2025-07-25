@@ -44,7 +44,7 @@ pub struct ConfigState {
     pub select_color: [f32; 4],
     pub accent_colors: [egui::Color32; 2],
 
-    pub custom_shapes: bool,
+    pub shapes_enabled: bool,
 }
 
 impl ConfigState {
@@ -82,7 +82,7 @@ impl ConfigState {
             select_color: [0.7, 0.8, 1.0, 0.8],
             accent_colors: [egui::Color32::from_rgb(85, 149, 255), egui::Color32::from_rgb(156, 85, 255)],
 
-            custom_shapes: false,
+            shapes_enabled: false,
         }
     }
 
@@ -136,7 +136,7 @@ impl ConfigState {
         let extra_section = conf.section(Some("Extra"));
 
         if let Some(section) = extra_section {
-            set_if_ok!(self.custom_shapes, section.get("custom_shapes").unwrap_or("").parse::<bool>());
+            set_if_ok!(self.shapes_enabled, section.get("custom_shapes").unwrap_or("").parse::<bool>());
         }
         else { error!("'Extra' section not found in config file.") }
 
@@ -179,7 +179,7 @@ impl ConfigState {
             .set("accent_color_1", format!("{:?}", self.accent_colors[1].to_array()));
 
         conf.with_section(Some("Extra"))
-            .set("custom_shapes", self.custom_shapes.to_string());
+            .set("custom_shapes", self.shapes_enabled.to_string());
 
         conf.write_to_file(file_path).unwrap();
 

@@ -32,6 +32,13 @@ pub struct PathLog {
     pub checkpoint_triggers: Vec<BoxCollider>,
     pub path_collections: Vec<PathCollection>,
 	// pub direct_paths: PathCollection,
+
+    mute_paths: HashMap<Uuid, bool>,
+    solo_paths: HashMap<Uuid, bool>,
+    mute_collections: HashMap<Uuid, bool>,
+    solo_collections: HashMap<Uuid, bool>,
+
+    visible: Vec<Uuid>,
 }
 
 impl PathLog {
@@ -57,6 +64,13 @@ impl PathLog {
             checkpoint_triggers: Vec::new(),
             path_collections: Vec::new(),
             // direct_paths: PathCollection::new(DIRECT_COLLECTION_NAME.to_string()),
+
+            mute_paths: HashMap::new(),
+            solo_paths: HashMap::new(),
+            mute_collections: HashMap::new(),
+            solo_collections: HashMap::new(),
+
+            visible: Vec::new(),
         };
 
         if !std::fs::exists("Paths").expect("") && std::fs::create_dir("Paths").is_err() {
@@ -266,7 +280,10 @@ impl PathLog {
             self.path_collections.clone()
         );
 
-        data.to_file(file_path.clone());
+        if let Err(e) = data.to_file(file_path.clone()) {
+            error!("{e}");
+        }
+        
         self.current_file = Some(file_path);
     }
 

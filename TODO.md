@@ -5,7 +5,7 @@
 
 - save timer position
 - scale ui by window resolution
-- copy / move paths between collections
+- move paths between collections
 - move collections
 - get some cool screenshots for the github
 - popup messages
