@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 use egui::epaint::Hsva;
 use egui::Color32;
@@ -8,8 +8,6 @@ use egui_keybind::Keybind;
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
 use crate::{gamedata, GLOBAL_STATE, RX};
-
-pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
@@ -24,7 +22,6 @@ pub struct Teleport {
 pub enum UIEvent {
     DeletePath {
         path_id: Uuid,
-        collection_id: Uuid,
     },
     ChangeDirectMode {
         new: bool,
@@ -50,6 +47,12 @@ pub enum UIEvent {
         new_name: String,
     },
     DeleteCollection {
+        id: Uuid,
+    },
+    ToggleMute {
+        id: Uuid,
+    },
+    ToggleSolo {
         id: Uuid,
     },
     ToggleActive {
@@ -116,18 +119,13 @@ impl Shape {
 }
 
 pub struct UIState {
-    pub events: VecDeque<UIEvent>,
+    // pub events: VecDeque<UIEvent>,
     pub file_path_rx: Option<RX>,
     tab: Tab,
     pub modifier: u8,
     delete_mode: bool,
     renaming_collection: Option<Uuid>,
     renaming_name: String,
-    pub selected_paths: HashMap<Uuid, Vec<Uuid>>,
-    pub mute_paths: HashMap<Uuid, bool>,
-    pub solo_paths: HashMap<Uuid, bool>,
-    pub mute_collections: HashMap<Uuid, bool>,
-    pub solo_collections: HashMap<Uuid, bool>,
     pub teleports: [ Option<Teleport>; 2 ],
     pub hide_checkpoints: bool,
 
@@ -137,18 +135,13 @@ pub struct UIState {
 impl UIState {
     pub fn init() -> UIState {
         let ui_state = UIState {
-            events: VecDeque::new(),
+            // events: VecDeque::new(),
             file_path_rx: None,
             tab: Tab::Comparison,
             modifier: 0,
             delete_mode: false,
             renaming_collection: None,
             renaming_name: "".to_string(),
-            selected_paths: HashMap::new(),
-            mute_paths: HashMap::new(),
-            solo_paths: HashMap::new(),
-            mute_collections: HashMap::new(),
-            solo_collections: HashMap::new(),
             teleports: [None, None],
             hide_checkpoints: false,
             custom_shapes: Vec::new(),
@@ -307,7 +300,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let state = GLOBAL_STATE.lock().unwrap();
 
     let active_collection = state.pathlog.active_collection;
-    let path_collections_len = state.pathlog.path_collections.len();
+    let path_collections_len = state.pathlog.collections().len();
 
     let accent_colors = state.config.accent_colors;
 
@@ -331,9 +324,12 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     for i in 0..path_collections_len {
         let state = GLOBAL_STATE.lock().unwrap();
 
-        let collection_name = state.pathlog.path_collections[i].name.clone();
-        let collection_id = state.pathlog.path_collections[i].id();
-        let collection_len = state.pathlog.path_collections[i].paths().len();
+        let collection_name = state.pathlog.collections()[i].name.clone();
+        let collection_id = state.pathlog.collections()[i].id();
+        let collection_len = state.pathlog.collections()[i].paths().len();
+        let mute = *state.pathlog.mute_collections.get(&collection_id).unwrap();
+        let solo = *state.pathlog.solo_collections.get(&collection_id).unwrap();
+        let high_pass = state.pathlog.filters.get(&collection_id).cloned();
 
         drop(state);
 
@@ -390,7 +386,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
                 let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
-                if *GLOBAL_STATE.lock().unwrap().ui_state.solo_collections.get(&collection_id).unwrap() {
+                if solo {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                     solo_button_text = solo_button_text.strong();
@@ -405,14 +401,13 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
-                if *GLOBAL_STATE.lock().unwrap().ui_state.mute_collections.get(&collection_id).unwrap() {
+                if mute {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                     mute_button_text = mute_button_text.strong();
                 }
 
                 if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // *state.ui_state.mute_collections.get_mut(&collection_id).unwrap() ^= true;
                     mute_toggles.push(collection_id);
                 }
 
@@ -420,7 +415,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 let mut mute_button_text = egui::RichText::new("\u{2B06}");
-                if let Some(HighPassFilter::GOLD) = GLOBAL_STATE.lock().unwrap().pathlog.filters.get(&collection_id) {
+                if let Some(HighPassFilter::Gold) = high_pass {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                     ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                     mute_button_text = mute_button_text.strong();
@@ -502,15 +497,15 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
     for collection_id in to_clear {
-        state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
+        state.pathlog.selected_paths.get_mut(&collection_id).unwrap().clear();
     }
 
     for collection_id in solo_toggles {
-        *state.ui_state.solo_collections.get_mut(&collection_id).unwrap() ^= true;
+        state.events.push_back(UIEvent::ToggleSolo { id: collection_id });
     }
 
     for collection_id in mute_toggles {
-        *state.ui_state.mute_collections.get_mut(&collection_id).unwrap() ^= true;
+        state.events.push_back(UIEvent::ToggleMute { id: collection_id });
     }
 
     state.ui_state.renaming_collection = renaming_collection;
@@ -522,16 +517,19 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let state = GLOBAL_STATE.lock().unwrap();
 
-    let path_id = state.pathlog.path_collections[collection].paths()[path].id();
-    let path_time = state.pathlog.path_collections[collection].paths()[path].time();
-    let collection_id = state.pathlog.path_collections[collection].id();
+    let path_id = state.pathlog.collections()[collection].paths()[path];
+    let path_time = state.pathlog.path(&path_id).unwrap().time();
+    let collection_id = state.pathlog.collections()[collection].id();
     let latest_path = state.pathlog.latest_path;
+    let selected = state.pathlog.selected_paths.get(&collection_id).unwrap().clone();
+    let mute = *state.pathlog.mute_paths.get(&path_id).unwrap();
+    let solo = *state.pathlog.solo_paths.get(&path_id).unwrap();
+    let high_pass = state.pathlog.filters.get(&collection_id).cloned();
 
     let accent_colors = state.config.accent_colors;
     let select_color = state.config.select_color;
 
     let mods = state.ui_state.modifier;
-    let selected = state.ui_state.selected_paths.get(&collection_id).unwrap().clone();
     let delete_mode = state.ui_state.delete_mode;
 
     drop(state);
@@ -548,7 +546,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
         let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
 
-        if *GLOBAL_STATE.lock().unwrap().ui_state.mute_paths.get(&path_id).unwrap() {
+        if mute {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
             ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
             mute_button_text = mute_button_text.strong();
@@ -563,7 +561,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
         let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
 
-        if *GLOBAL_STATE.lock().unwrap().ui_state.solo_paths.get(&path_id).unwrap() {
+        if solo {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
             ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
             solo_button_text = solo_button_text.strong();
@@ -612,9 +610,9 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         ui.visuals_mut().override_text_color = None;
 
         // TODO: maybe implement PartialEq for HighPassFilter
-        if let Some(filter) = GLOBAL_STATE.lock().unwrap().pathlog.filters.get(&collection_id) {
-            if let HighPassFilter::PATH{ id } = filter {
-                if *id == path_id {
+        if let Some(filter) = high_pass {
+            if let HighPassFilter::Path{ id } = filter {
+                if id == path_id {
                     ui.label("\u{2B06}");
                 }
             }
@@ -634,16 +632,16 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let mut state = GLOBAL_STATE.lock().unwrap();
 
     if mute_toggle {
-        *state.ui_state.mute_paths.get_mut(&path_id).unwrap() ^= true;
+        state.events.push_back(UIEvent::ToggleMute { id: path_id });
     }
 
     if solo_toggle {
-        *state.ui_state.solo_paths.get_mut(&path_id).unwrap() ^= true;
+        state.events.push_back(UIEvent::ToggleSolo { id: path_id });
     }
 
     if delete {
-        state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
-        state.ui_state.events.push_back(UIEvent::DeletePath { path_id, collection_id });
+        state.pathlog.selected_paths.get_mut(&collection_id).unwrap().clear();
+        state.events.push_back(UIEvent::DeletePath { path_id });
     }
 
     state.ui_state.delete_mode = delete_mode;

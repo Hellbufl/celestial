@@ -61,7 +61,8 @@ pub struct ScreenDimensions {
 }
 
 // static TICKRATE : u32 = 60;
-// static RECORDING_GROUP : &str = "recording";
+static RECORDING_GROUP : &str = "recording";
+static PATHS_GROUP : &str = "paths";
 static TRIGGERS_GROUP : &str = "triggers";
 static TELEPORTS_GROUP : &str = "teleports";
 static SHAPES_GROUP : &str = "custom_shapes";
@@ -69,6 +70,13 @@ static SHAPES_GROUP : &str = "custom_shapes";
 static SCREEN_DIMENSIONS: Lazy<Mutex<ScreenDimensions>> = Lazy::new(|| Mutex::new(ScreenDimensions::default()));
 
 pub static GLOBAL_STATE: Lazy<Mutex<GlobalState>> = Lazy::new(|| Mutex::new(GlobalState::init()));
+
+pub static PATHLOG: Lazy<Mutex<PathLog>> = Lazy::new(|| Mutex::new(PathLog::init()));
+pub static CONFIG_STATE: Lazy<Mutex<ConfigState>> = Lazy::new(|| Mutex::new(ConfigState::init()));
+pub static UISTATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init()));
+pub static EVENTS: Lazy<Mutex<Vec<UIEvent>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static RENDER_UPDATES: Lazy<Mutex<RenderUpdates>> = Lazy::new(|| Mutex::new(RenderUpdates::new()));
+
 
 static mut PINTAR : Option<Pintar> = None;
 static mut EGUI_RENDERER : Option<DirectX11Renderer> = None;
@@ -126,15 +134,22 @@ pub enum RX {
 // }
 
 pub struct RenderUpdates {
-    paths: bool,
-    triggers: bool,
-    teleports: bool,
-    shapes: bool,
+    pub paths: bool,
+    pub triggers: bool,
+    pub teleports: bool,
+    pub shapes: bool,
 }
 
 impl RenderUpdates {
     pub fn new() -> Self {
         RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false }
+    }
+
+    pub fn or(&mut self, other: RenderUpdates) {
+        self.paths |= other.paths;
+        self.triggers |= other.triggers;
+        self.teleports |= other.teleports;
+        self.shapes |= other.shapes;
     }
 }
 
@@ -162,10 +177,8 @@ impl GlobalState {
 
         while let Some(event) = self.events.pop_front() {
             match event {
-                UIEvent::DeletePath { path_id, collection_id } => {
-                    self.ui_state.mute_paths.remove(&path_id);
-                    self.ui_state.solo_paths.remove(&path_id);
-                    self.pathlog.remove(path_id, collection_id);
+                UIEvent::DeletePath { path_id } => {
+                    self.pathlog.delete_path(path_id);
                     self.updates.paths = true;
                 }
                 UIEvent::ChangeDirectMode { new } => {
@@ -190,8 +203,8 @@ impl GlobalState {
                     self.pathlog.start();
                 }
                 UIEvent::StopRecording => {
-                    self.ui_state.mute_paths.insert(self.pathlog.recording_path.id(), false);
-                    self.ui_state.solo_paths.insert(self.pathlog.recording_path.id(), false);
+                    self.pathlog.mute_paths.insert(self.pathlog.recording_path.id(), false);
+                    self.pathlog.solo_paths.insert(self.pathlog.recording_path.id(), false);
                     self.pathlog.stop();
                     self.updates.paths = true;
                 }
@@ -202,34 +215,25 @@ impl GlobalState {
                     self.pathlog.clear_triggers();
                 }
                 UIEvent::CreateCollection => {
-                    let new_collection = PathCollection::new(DEFAULT_COLLECTION_NAME.to_string());
-                    self.ui_state.mute_collections.insert(new_collection.id(), false);
-                    self.ui_state.solo_collections.insert(new_collection.id(), false);
-                    self.ui_state.selected_paths.insert(new_collection.id(), Vec::new());
-                    self.pathlog.path_collections.push(new_collection);
+                    self.pathlog.create_collection();
                 }
-                UIEvent::RenameCollection { id, mut new_name } => {
-                    for i in 0..self.pathlog.path_collections.len() {
-                        if self.pathlog.path_collections[i].id() == id {
-                            if new_name == "" { new_name = "can't put nothing bro".to_string() }
-                            self.pathlog.path_collections[i].name = new_name.clone();
-                        }
-                    }
+                UIEvent::RenameCollection { id, new_name } => {
+                    self.pathlog.rename_collection(id, new_name);
                 }
                 UIEvent::DeleteCollection { id } => {
-                    if let Some(index) = self.pathlog.path_collections.iter().position(|c| c.id() == id) {
-
-                        for path in self.pathlog.path_collections[index].paths() {
-                            self.ui_state.mute_paths.remove(&path.id());
-                            self.ui_state.solo_paths.remove(&path.id());
-                        }
-
-                        self.ui_state.mute_collections.remove(&id);
-                        self.ui_state.solo_collections.remove(&id);
-                        self.pathlog.path_collections.remove(index);
-                        self.updates.paths = true;
-                    }
+                    self.pathlog.delete_collection(id);
+                    self.updates.paths = true;
                 }
+                UIEvent::ToggleMute { id } => {
+                    if let Some(b) = self.pathlog.mute_paths.get_mut(&id) { *b ^= true; }
+                    if let Some(b) = self.pathlog.mute_collections.get_mut(&id) { *b ^= true; }
+                    self.pathlog.update_visible();
+                },
+                UIEvent::ToggleSolo { id } => {
+                    if let Some(b) = self.pathlog.solo_paths.get_mut(&id) { *b ^= true; }
+                    if let Some(b) = self.pathlog.solo_collections.get_mut(&id) { *b ^= true; }
+                    self.pathlog.update_visible();
+                },
                 UIEvent::ToggleActive { id } => {
                     if self.pathlog.active_collection == Some(id) {
                         self.pathlog.active_collection = None;
@@ -240,32 +244,32 @@ impl GlobalState {
                 }
                 UIEvent::ToggleGoldFilter { collection_id } => {
                     if !self.pathlog.filters.contains_key(&collection_id) {
-                        self.pathlog.filters.insert(collection_id, HighPassFilter::GOLD);
+                        self.pathlog.filters.insert(collection_id, HighPassFilter::Gold);
                     }
                     else {
-                        if let Some(HighPassFilter::GOLD) = self.pathlog.filters.get(&collection_id) {
+                        if let Some(HighPassFilter::Gold) = self.pathlog.filters.get(&collection_id) {
                             self.pathlog.filters.remove(&collection_id);
                         }
                         else {
-                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::GOLD;
+                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Gold;
                         }
                     }
                 }
                 UIEvent::SetPathFilter { collection_id, path_id } => {
                     match self.pathlog.filters.get_mut(&collection_id) {
-                        Some(HighPassFilter::PATH{ id }) => {
+                        Some(HighPassFilter::Path{ id }) => {
                             if *id == path_id {
                                 self.pathlog.filters.remove(&collection_id);
                             }
                             else {
-                                *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
+                                *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
                             }
                         },
-                        Some(HighPassFilter::GOLD) => {
-                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::PATH { id: path_id };
+                        Some(HighPassFilter::Gold) => {
+                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
                         }
                         _ => {
-                            self.pathlog.filters.insert(collection_id, HighPassFilter::PATH{ id: path_id });
+                            self.pathlog.filters.insert(collection_id, HighPassFilter::Path{ id: path_id });
                         }
                     }
                 }
@@ -299,25 +303,9 @@ impl GlobalState {
                         if let Ok(dialog_result) = rx.try_recv() {
                             if let Ok(Some(path)) = dialog_result {
                                 if let Err(e) = self.pathlog.load_comparison(path.to_str().unwrap().to_string()) {
+                                    self.ui_state.file_path_rx = None;
                                     error!("{e}");
                                     continue;
-                                }
-
-                                self.ui_state.mute_collections.clear();
-                                self.ui_state.solo_collections.clear();
-                                self.ui_state.selected_paths.clear();
-                                self.ui_state.mute_paths.clear();
-                                self.ui_state.solo_paths.clear();
-
-                                for collection in &self.pathlog.path_collections {
-                                    self.ui_state.mute_collections.insert(collection.id(), false);
-                                    self.ui_state.solo_collections.insert(collection.id(), false);
-                                    self.ui_state.selected_paths.insert(collection.id(), Vec::new());
-
-                                    for path in collection.paths() {
-                                        self.ui_state.mute_paths.insert(path.id(), false);
-                                        self.ui_state.solo_paths.insert(path.id(), false);
-                                    }
                                 }
 
                                 if let Some(start_trigger) = self.pathlog.main_triggers[0] {
@@ -351,20 +339,20 @@ impl GlobalState {
                     }
                 },
                 UIEvent::SelectPath { path_id, collection_id, modifier } => {
-                    let collection = &self.pathlog.path_collections[self.pathlog.path_collections.iter().position(|c| c.id() == collection_id).unwrap()];
-                    let path = collection.get_path(path_id).unwrap();
+                    let collection = self.pathlog.get_collection(collection_id).unwrap().clone();
+                    let path = self.pathlog.path(&path_id).unwrap().clone();
 
-                    let selected = self.ui_state.selected_paths.get_mut(&collection.id()).unwrap();
+                    let selected = self.pathlog.selected_paths.get_mut(&collection.id()).unwrap();
 
                     match modifier {
                         1 => {
                             let last_id = *selected.last().unwrap_or(&(path.id()));
-                            let mut last_pos = collection.paths().iter().position(|p| p.id() == last_id).unwrap();
-                            let mut this_pos = collection.paths().iter().position(|p| p.id() == path.id()).unwrap();
+                            let mut last_pos = collection.paths().iter().position(|p| *p == last_id).unwrap();
+                            let mut this_pos = collection.paths().iter().position(|p| *p == path.id()).unwrap();
                             if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
                             for p in &collection.paths()[this_pos..last_pos] {
-                                if let Some(pos) = selected.iter().position(|id| *id == p.id()) { selected.remove(pos);}
-                                else { selected.push(p.id()) }
+                                if let Some(pos) = selected.iter().position(|id| *id == *p) { selected.remove(pos);}
+                                else { selected.push(*p) }
                             }
                         },
                         2 => {
@@ -416,7 +404,8 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
 
     if PINTAR.is_none() {
         let mut pintar = Pintar::new(&this, 0);
-        // pintar.add_line_vertex_group("paths".to_string());
+        pintar.add_line_vertex_group(RECORDING_GROUP.to_string());
+        pintar.add_line_vertex_group(PATHS_GROUP.to_string());
         pintar.add_default_vertex_group(TRIGGERS_GROUP.to_string());
         pintar.add_default_vertex_group(TELEPORTS_GROUP.to_string());
         pintar.add_default_vertex_group(SHAPES_GROUP.to_string());
@@ -451,13 +440,20 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                 state.pathlog.unpause();
             }
 
-            state.pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
+            let pathlog_updates = state.pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
+            state.updates.or(pathlog_updates);
         }
 
         if let Some(pintar) = PINTAR.as_mut() {
             let view_proj = gamedata::get_view_matrix();
 
             pintar.set_default_view_proj(view_proj);
+
+            let line_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::LineVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(RECORDING_GROUP.to_string()).unwrap();
+            line_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
+
+            let line_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::LineVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(PATHS_GROUP.to_string()).unwrap();
+            line_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
 
             let triggers_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::DefaultVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(TRIGGERS_GROUP.to_string()).unwrap();
             triggers_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
@@ -468,9 +464,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             let shapes_vertex_group: &mut pintar::vertex_group::VertexGroup<pintar::default_elements::DefaultVertex, pintar::default_elements::DefaultConstants> = pintar.get_vertex_group_as(SHAPES_GROUP.to_string()).unwrap();
             shapes_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
 
-            if let Ok(state) = GLOBAL_STATE.lock() {
-                render_path(pintar, &state.pathlog.recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
-            }
+            pintar.clear_vertex_group(RECORDING_GROUP.to_string());
+            render_path(pintar, RECORDING_GROUP.to_string(), &GLOBAL_STATE.lock().unwrap().pathlog.recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
 
             pintar.clear_vertex_group(SHAPES_GROUP.to_string());
             render_custom_shapes(pintar);
@@ -478,6 +473,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
             render_teleports(pintar);
 
+            pintar.clear_vertex_group(PATHS_GROUP.to_string());
             render_all_paths(pintar);
 
             pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
@@ -545,84 +541,59 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
     ocular::get_present().expect("Uh oh. Present isn't hooked?!").call(this, sync_interval, flags)
 }
 
-fn render_path(pintar: &mut Pintar, path: &Path, color: [f32; 4], thickness: f32) {
+fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f32; 4], thickness: f32) {
+    // let path = GLOBAL_STATE.lock().unwrap().pathlog.path(&path_id).unwrap().clone();
+
     for segment in path.segments() {
         if segment.len() < 2 { continue; }
-        pintar.add_line("default_line".to_string(), segment, color, thickness);
+        pintar.add_line(vertex_group.clone(), segment, color, thickness);
     }
 }
 
 // fn render_all_paths(pintar: &mut Pintar, egui: &UIState, config: &ConfigState, pathlog: &PathLog) {
 fn render_all_paths(pintar: &mut Pintar) {
-    if !GLOBAL_STATE.lock().unwrap().updates.paths { return; }
-
     let state = GLOBAL_STATE.lock().unwrap();
 
-    let path_collections = state.pathlog.path_collections.clone();
+    if !state.updates.paths { return; }
+
+    let compared_paths = state.pathlog.compared_paths().paths().clone();
+    let ignored_paths = state.pathlog.ignored_paths().clone();
+    let selected_paths = state.pathlog.selected_paths.clone();
+
+    let comparison_mode = state.pathlog.comparison_mode();
 
     let fast_color = state.config.fast_color;
     let slow_color = state.config.slow_color;
     let gold_color = state.config.gold_color;
     let select_color = state.config.select_color;
 
-    let solo_collections = state.ui_state.solo_collections.clone();
-    let solo_paths = state.ui_state.solo_paths.clone();
-    let mute_paths = state.ui_state.mute_paths.clone();
-
     drop(state);
 
-    pintar.clear_vertex_group("default_line".to_string());
-
-    let mut visible_collection = PathCollection::new("Visible".to_string());
+    // let mut visible_collection = PathCollection::new("Visible".to_string());
     let mut selected : Vec<Uuid> = Vec::new();
-
-    for collection in &path_collections {
-        let mut visible = true;
-        for v in solo_collections.values() {
-            if *v {visible = false;}
-        }
-
-        if !visible { continue; }
-
-        for path in collection.paths() {
-            if visible_collection.paths().contains(path) { continue; }
-
-            visible_collection.add(path.clone(), None);
-
-            if GLOBAL_STATE.lock().unwrap().ui_state.selected_paths.get(&collection.id()).unwrap().contains(&path.id()) {
-                selected.push(path.id());
-            }
-        }
+    for s in selected_paths.values() {
+        selected.extend(s);
     }
 
-    let visible_paths = visible_collection.paths();
-    for i in 0..visible_paths.len() {
-        let path = &visible_paths[i];
-
-        let mut visible = true;
-        for v in solo_paths.values() {
-            if *v {visible = false;}
-        }
-        if solo_paths.get(&path.id()) == Some(&true) { visible = true; }
-        if mute_paths.get(&path.id()) == Some(&true) { visible = false; }
-        if !visible { continue; }
+    for i in 0..compared_paths.len() {
+        let path_id = compared_paths[i];
 
         let fast = fast_color;
         let slow = slow_color;
         let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
         let mut color: [f32; 4];
-        let thick: f32;
+        let mut thick: f32;
 
         if i == 0 {
             color = gold_color;
             thick = 0.04;
         }
-        else if visible_paths.len() == 2 {
+        else if compared_paths.len() == 2 {
             color = slow_color;
             thick = 0.02;
         }
         else {
-            let p = (i - 1) as f32 / (visible_paths.len() - 2) as f32;
+            let p = (i - 1) as f32 / (compared_paths.len() - 2) as f32;
 
             color = [
                 lerp(fast[0], slow[0], p),
@@ -633,12 +604,31 @@ fn render_all_paths(pintar: &mut Pintar) {
             thick = 0.02;
         }
 
-        if selected.contains(&path.id()) {
+        // for path_id in &ignored_paths[i] {
+        //     if matches!(comparison_mode, Comparison::Average) {
+        //         let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
+        //         render_path(pintar, &GLOBAL_STATE.lock().unwrap().pathlog.path(&path_id).unwrap(), ignored_color, thick);
+        //     }
+        // }
+
+        if selected.contains(&path_id) {
             color = select_color;
+            thick = 0.04;
         }
 
-        render_path(pintar, &path, color, thick);
+        if let Ok(state) = GLOBAL_STATE.lock() {
+            render_path(pintar, PATHS_GROUP.to_string(), &state.pathlog.path(&path_id).unwrap(), color, thick);
+        }
     }
+
+    // let ignored_paths = visible_paths[1].paths();
+    // for i in 0..ignored_paths.len() {
+    //     let path_id = ignored_paths[i];
+
+    //     match comparison_mode {
+    //         Comparison::Average =>
+    //     }
+    // }
 }
 
 fn render_triggers(pintar: &mut Pintar) {

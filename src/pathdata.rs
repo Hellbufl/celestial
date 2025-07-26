@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::vec::Vec;
 // use tracing::{error, info};
@@ -8,7 +9,7 @@ use uuid::Uuid;
 
 use crate::error::Error;
 
-const CURRENT_FILE_VERSION : &str = "0.5";
+const CURRENT_FILE_VERSION : &str = "0.5.1";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
@@ -141,7 +142,7 @@ impl BoxCollider {
             id: Uuid::new_v4(),
             position: pos.into(),
             rotation,
-            basis: Mat3::from_euler(glam::EulerRot::XYZ, rotation[0], rotation[1], rotation[2]).transpose(), // transposing cause xA = A^Tx and i can't do Vec3 * Mat3
+            basis: Mat3::from_euler(glam::EulerRot::XYZ, rotation[0], rotation[1], rotation[2]).transpose(),
             size,
         }
     }
@@ -183,9 +184,10 @@ impl BoxCollider {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum HighPassFilter {
-    GOLD,
-    PATH {
+    Gold,
+    Path {
         id: Uuid,
     },
 }
@@ -195,7 +197,7 @@ pub enum HighPassFilter {
 pub struct PathCollection {
     id: Uuid,
     pub name: String,
-    paths: Vec<Path>,
+    paths: Vec<Uuid>,
 }
 
 impl PathCollection {
@@ -211,62 +213,73 @@ impl PathCollection {
         self.id
     }
 
-    pub fn get_path(&self, id: Uuid) -> Option<&Path> {
-        match self.paths.iter().position(|p| p.id() == id) {
-            Some(i) => Some(&self.paths[i]),
-            None => None,
-        }
-    }
+    // pub fn get_path(&self, id: Uuid) -> Option<&Path> {
+    //     match self.paths.iter().position(|p| p.id() == id) {
+    //         Some(i) => Some(&self.paths[i]),
+    //         None => None,
+    //     }
+    // }
 
-    pub fn paths(&self) -> &Vec<Path> {
+    pub fn paths(&self) -> &Vec<Uuid> {
         &self.paths
     }
 
-    pub fn add(&mut self, new_path: Path, high_pass: Option<&HighPassFilter>) {
-        match high_pass {
-            Some(HighPassFilter::GOLD) => {
-                if self.paths.len() == 0 || self.paths[0].time() > new_path.time() {
-                    self.paths.insert(0, new_path);
-                }
-                return;
-            }
-            Some(HighPassFilter::PATH { id }) => {
-                if self.paths.is_empty() {
-                    self.paths.push(new_path);
-                    return;
-                }
-
-                for i in 0..self.paths.len() {
-                    if self.paths[i].time() > new_path.time() {
-                        self.paths.insert(i, new_path);
-                        return;
-                    }
-                    if self.paths[i].id() == *id { return; }
-                }
-            }
-            None => {
-                for i in 0..self.paths.len() {
-                    if self.paths[i].time() < new_path.time() { continue; }
-                    self.paths.insert(i, new_path);
-                    return;
-                }
-                self.paths.push(new_path);
-            }
-        }
+    pub fn insert(&mut self, index: usize, path_id: Uuid) {
+        self.paths.insert(index, path_id);
     }
 
+    pub fn push(&mut self, path_id: Uuid) {
+        self.paths.push(path_id);
+    }
+
+    // pub fn add(&mut self, new_path: Path, high_pass: Option<&HighPassFilter>) {
+    //     match high_pass {
+    //         Some(HighPassFilter::GOLD) => {
+    //             if self.paths.len() == 0 || self.paths[0].time() > new_path.time() {
+    //                 self.paths.insert(0, new_path);
+    //             }
+    //             return;
+    //         }
+    //         Some(HighPassFilter::PATH { id }) => {
+    //             if self.paths.is_empty() {
+    //                 self.paths.push(new_path);
+    //                 return;
+    //             }
+
+    //             for i in 0..self.paths.len() {
+    //                 if self.paths[i].time() > new_path.time() {
+    //                     self.paths.insert(i, new_path);
+    //                     return;
+    //                 }
+    //                 if self.paths[i].id() == *id { return; }
+    //             }
+    //         }
+    //         None => {
+    //             for i in 0..self.paths.len() {
+    //                 if self.paths[i].time() < new_path.time() { continue; }
+    //                 self.paths.insert(i, new_path);
+    //                 return;
+    //             }
+    //             self.paths.push(new_path);
+    //         }
+    //     }
+    // }
+
     pub fn remove(&mut self, id: Uuid) {
-        if let Some(index) = self.paths.iter().position(|p| p.id == id) {
+        if let Some(index) = self.paths.iter().position(|p| *p == id) {
             self.paths.remove(index);
         }
     }
 
-    // pub fn sort(&mut self) {} ?
+    pub fn clear_paths(&mut self) {
+        self.paths.clear();
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct CompFile {
     version: String,
+    paths: HashMap<Uuid, Path>,
     trigger_data: [[[f32; 3]; 3]; 2],
     collections: Vec<PathCollection>,
 }
@@ -275,7 +288,7 @@ impl CompFile {
 
     // for some reason glam vectors don't deserialize correctly with serde_binary
     // so i have to convert them from and to arrays myself
-    pub fn new(trigger: [BoxCollider; 2], collections: Vec<PathCollection>) -> CompFile {
+    pub fn new(trigger: [BoxCollider; 2], paths: HashMap<Uuid, Path>, collections: Vec<PathCollection>) -> CompFile {
 
         let trigger_data = [[
                 trigger[0].position,//.to_array(),
@@ -290,6 +303,7 @@ impl CompFile {
 
         CompFile {
             version: CURRENT_FILE_VERSION.into(),
+            paths,
             trigger_data,
             collections,
         }
@@ -310,6 +324,10 @@ impl CompFile {
         ]
     }
 
+    pub fn get_paths(&self) -> HashMap<Uuid, Path> {
+        self.paths.clone()
+    }
+
     pub fn get_collections(&self) -> Vec<PathCollection> {
         self.collections.clone()
     }
@@ -325,14 +343,17 @@ impl CompFile {
 
         if first_field_name != "version" {
             let old_comp_file = serde_binary::from_vec::<CompFile04>(file_content, binary_stream::Endian::Little)?;
-            return Ok(CompFile::from(old_comp_file));
+            return Ok(CompFile::from(CompFile05::from(old_comp_file)));
         }
 
         let file_version_len = serde_binary::from_slice::<u32>(&file_content[head..(head + 4)], binary_stream::Endian::Little)? as usize;
         let file_version = serde_binary::from_slice::<String>(&file_content[head..(head + 4 + file_version_len)], binary_stream::Endian::Little)?;
 
-        if file_version == "0.5" {
+        if file_version == "0.5.1" {
             Ok(serde_binary::from_vec::<CompFile>(file_content.clone(), binary_stream::Endian::Little)?)
+        }
+        else if file_version == "0.5" {
+            Ok(CompFile::from(serde_binary::from_vec::<CompFile05>(file_content.clone(), binary_stream::Endian::Little)?))
         }
         else {
             Err(Error::Binary{ msg: format!("Version {file_version} not compatible.") })
@@ -372,47 +393,68 @@ struct CompFile04 {
     pub collections: Vec<PathCollection04>,
 }
 
-impl From<PathCollection04> for PathCollection {
+impl From<PathCollection04> for PathCollection05 {
     fn from(old: PathCollection04) -> Self {
-        let mut paths = Vec::<Path>::new();
+        let mut paths = Vec::<Path05>::new();
         for old_path in old.paths {
             let mut times = Vec::new();
             let mut segments = Vec::new();
             times.push(old_path.time);
             segments.push(old_path.nodes);
-            paths.push(Path { id: old_path.id, times, segments })
+            paths.push(Path05 { id: old_path.id, times, segments })
         }
-        PathCollection { id: old.id, name: old.name, paths }
+        PathCollection05 { id: old.id, name: old.name, paths }
     }
 }
 
-impl From<CompFile04> for CompFile {
+impl From<CompFile04> for CompFile05 {
     fn from(old_comp_file: CompFile04) -> Self {
         let mut collections = Vec::new();
         for old_collection in old_comp_file.collections {
-            collections.push(PathCollection::from(old_collection));
+            collections.push(PathCollection05::from(old_collection));
         }
-        CompFile { version: CURRENT_FILE_VERSION.into(), trigger_data: old_comp_file.trigger_data, collections }
+        CompFile05 { version: "0.5".to_string(), trigger_data: old_comp_file.trigger_data, collections }
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct Path05 {
-	id: Uuid,
-	times: Vec<u64>,
-    segments: Vec<Vec<[f32; 3]>>,
+	pub id: Uuid,
+	pub times: Vec<u64>,
+    pub segments: Vec<Vec<[f32; 3]>>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct PathCollection05 {
-    id: Uuid,
+    pub id: Uuid,
     pub name: String,
-    paths: Vec<Path05>,
+    pub paths: Vec<Path05>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct CompFile05 {
-    version: String,
-    trigger_data: [[[f32; 3]; 3]; 2],
-    collections: Vec<PathCollection05>,
+    pub version: String,
+    pub trigger_data: [[[f32; 3]; 3]; 2],
+    pub collections: Vec<PathCollection05>,
+}
+
+impl From<CompFile05> for CompFile {
+    fn from(old_comp_file: CompFile05) -> Self {
+        let mut collections : Vec<PathCollection> = Vec::new();
+        let mut paths : HashMap<Uuid, Path> = HashMap::new();
+
+        for old_collection in old_comp_file.collections {
+            let mut new_collection = PathCollection::new(old_collection.name);
+            new_collection.id = old_collection.id;
+
+            for old_path in old_collection.paths {
+                new_collection.paths.push(old_path.id);
+                paths.insert(old_path.id, Path{ id: old_path.id, times: old_path.times, segments: old_path.segments });
+            }
+
+            collections.push(new_collection);
+        }
+
+        CompFile { version: CURRENT_FILE_VERSION.into(), paths, trigger_data: old_comp_file.trigger_data, collections }
+    }
 }
