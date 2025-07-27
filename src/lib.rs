@@ -69,12 +69,10 @@ static SHAPES_GROUP : &str = "custom_shapes";
 
 static SCREEN_DIMENSIONS: Lazy<Mutex<ScreenDimensions>> = Lazy::new(|| Mutex::new(ScreenDimensions::default()));
 
-pub static GLOBAL_STATE: Lazy<Mutex<GlobalState>> = Lazy::new(|| Mutex::new(GlobalState::init()));
-
 pub static PATHLOG: Lazy<Mutex<PathLog>> = Lazy::new(|| Mutex::new(PathLog::init()));
 pub static CONFIG_STATE: Lazy<Mutex<ConfigState>> = Lazy::new(|| Mutex::new(ConfigState::init()));
 pub static UISTATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init()));
-pub static EVENTS: Lazy<Mutex<Vec<UIEvent>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static EVENTS: Lazy<Mutex<VecDeque<UIEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 pub static RENDER_UPDATES: Lazy<Mutex<RenderUpdates>> = Lazy::new(|| Mutex::new(RenderUpdates::new()));
 
 
@@ -153,241 +151,263 @@ impl RenderUpdates {
     }
 }
 
-pub struct GlobalState {
-    pathlog: PathLog,
-    config: ConfigState,
-    ui_state: UIState,
-    events: VecDeque<UIEvent>,
-    updates: RenderUpdates,
-}
+fn process_events() {
+    let mut loop_events : VecDeque<UIEvent> = VecDeque::new();
 
-impl GlobalState {
-    pub fn init() -> GlobalState {
-        GlobalState {
-            pathlog: PathLog::init(),
-            config: ConfigState::init(),
-            ui_state: UIState::init(),
-            events: VecDeque::new(),
-            updates: RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false },
-        }
-    }
+    let mut events = EVENTS.lock().unwrap();
 
-    pub unsafe fn process_events(&mut self) {
-        let mut loop_events : VecDeque<UIEvent> = VecDeque::new();
+    let mut event_list = events.clone();
+    events.clear();
 
-        while let Some(event) = self.events.pop_front() {
-            match event {
-                UIEvent::DeletePath { path_id } => {
-                    self.pathlog.delete_path(path_id);
-                    self.updates.paths = true;
-                }
-                UIEvent::ChangeDirectMode { new } => {
-                    self.pathlog.set_direct_mode(new);
-                }
-                UIEvent::ChangeAutosave { new } => {
-                    self.pathlog.set_autosave(new);
-                }
-                UIEvent::ChangeAutoReset { new } => {
-                    self.pathlog.set_autoreset(new);
-                }
-                UIEvent::SpawnTrigger { index, position, rotation } => {
-                     if self.pathlog.is_empty() {
-                        self.pathlog.create_trigger(index, position, rotation, self.config.trigger_sizes[index]);
-                        self.events.push_back(UIEvent::SpawnTeleport { index });
-                    }
-                    else {
-                        // TODO: popup warning
-                    }
-                }
-                UIEvent::StartRecording => {
-                    self.pathlog.start();
-                }
-                UIEvent::StopRecording => {
-                    self.pathlog.mute_paths.insert(self.pathlog.recording_path.id(), false);
-                    self.pathlog.solo_paths.insert(self.pathlog.recording_path.id(), false);
-                    self.pathlog.stop();
-                    self.updates.paths = true;
-                }
-                UIEvent::ResetRecording => {
-                    self.pathlog.reset();
-                }
-                UIEvent::ClearTriggers => {
-                    self.pathlog.clear_triggers();
-                }
-                UIEvent::CreateCollection => {
-                    self.pathlog.create_collection();
-                }
-                UIEvent::RenameCollection { id, new_name } => {
-                    self.pathlog.rename_collection(id, new_name);
-                }
-                UIEvent::DeleteCollection { id } => {
-                    self.pathlog.delete_collection(id);
-                    self.updates.paths = true;
-                }
-                UIEvent::ToggleMute { id } => {
-                    if let Some(b) = self.pathlog.mute_paths.get_mut(&id) { *b ^= true; }
-                    if let Some(b) = self.pathlog.mute_collections.get_mut(&id) { *b ^= true; }
-                    self.pathlog.update_visible();
-                },
-                UIEvent::ToggleSolo { id } => {
-                    if let Some(b) = self.pathlog.solo_paths.get_mut(&id) { *b ^= true; }
-                    if let Some(b) = self.pathlog.solo_collections.get_mut(&id) { *b ^= true; }
-                    self.pathlog.update_visible();
-                },
-                UIEvent::ToggleActive { id } => {
-                    if self.pathlog.active_collection == Some(id) {
-                        self.pathlog.active_collection = None;
-                    }
-                    else {
-                        self.pathlog.active_collection = Some(id);
-                    }
-                }
-                UIEvent::ToggleGoldFilter { collection_id } => {
-                    if !self.pathlog.filters.contains_key(&collection_id) {
-                        self.pathlog.filters.insert(collection_id, HighPassFilter::Gold);
-                    }
-                    else {
-                        if let Some(HighPassFilter::Gold) = self.pathlog.filters.get(&collection_id) {
-                            self.pathlog.filters.remove(&collection_id);
-                        }
-                        else {
-                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Gold;
-                        }
-                    }
-                }
-                UIEvent::SetPathFilter { collection_id, path_id } => {
-                    match self.pathlog.filters.get_mut(&collection_id) {
-                        Some(HighPassFilter::Path{ id }) => {
-                            if *id == path_id {
-                                self.pathlog.filters.remove(&collection_id);
-                            }
-                            else {
-                                *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
-                            }
-                        },
-                        Some(HighPassFilter::Gold) => {
-                            *self.pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
-                        }
-                        _ => {
-                            self.pathlog.filters.insert(collection_id, HighPassFilter::Path{ id: path_id });
-                        }
-                    }
-                }
-                UIEvent::SaveComparison => {
-                    if self.ui_state.file_path_rx.is_none() {
-                        let (tx, rx) = mpsc::channel();
-                        thread::spawn(move || {
-                                tx.send(FileDialog::new().show_save_single_file()).unwrap();
-                        });
-                        self.ui_state.file_path_rx = Some(RX::Save { rx });
-                        loop_events.push_back(UIEvent::SaveComparison);
-                    }
-                    else if let Some(RX::Save { rx }) = &self.ui_state.file_path_rx {
-                        if let Ok(dialog_result) = rx.try_recv() {
-                            if let Ok(Some(path)) = dialog_result { self.pathlog.save_comparison(path.to_str().unwrap().to_string()); }
-                            self.ui_state.file_path_rx = None;
-                        }
-                        else { loop_events.push_back(UIEvent::SaveComparison); }
-                    }
-                }
-                UIEvent::LoadComparison => {
-                    if self.ui_state.file_path_rx.is_none() {
-                        let (tx, rx) = mpsc::channel();
-                        thread::spawn(move || {
-                            tx.send(FileDialog::new().show_open_single_file()).unwrap();
-                        });
-                        self.ui_state.file_path_rx = Some(RX::Load { rx });
-                        loop_events.push_back(UIEvent::LoadComparison);
-                    }
-                    else if let Some(RX::Load { rx }) = &self.ui_state.file_path_rx {
-                        if let Ok(dialog_result) = rx.try_recv() {
-                            if let Ok(Some(path)) = dialog_result {
-                                if let Err(e) = self.pathlog.load_comparison(path.to_str().unwrap().to_string()) {
-                                    self.ui_state.file_path_rx = None;
-                                    error!("{e}");
-                                    continue;
-                                }
+    drop(events);
 
-                                if let Some(start_trigger) = self.pathlog.main_triggers[0] {
-                                    self.ui_state.teleports[0] = Some(Teleport {
-                                        location: start_trigger.position,
-                                        rotation: start_trigger.rotation(),
-                                        camera_rotation: None,
-                                    })
-                                }
-
-                                if let Some(end_trigger) = self.pathlog.main_triggers[1] {
-                                    self.ui_state.teleports[1] = Some(Teleport {
-                                        location: end_trigger.position,
-                                        rotation: end_trigger.rotation(),
-                                        camera_rotation: None,
-                                    })
-                                }
-                            }
-                            self.ui_state.file_path_rx = None;
-                            self.updates.paths = true;
-                        }
-                        else { loop_events.push_back(UIEvent::LoadComparison); }
-                    }
+    while let Some(event) = event_list.pop_front() {
+        match event {
+            UIEvent::DeletePath { path_id } => {
+                PATHLOG.lock().unwrap().delete_path(path_id);
+                RENDER_UPDATES.lock().unwrap().paths = true;
+            }
+            UIEvent::ChangeDirectMode { new } => {
+                PATHLOG.lock().unwrap().set_direct_mode(new);
+            }
+            UIEvent::ChangeAutosave { new } => {
+                PATHLOG.lock().unwrap().set_autosave(new);
+            }
+            UIEvent::ChangeAutoReset { new } => {
+                PATHLOG.lock().unwrap().set_autoreset(new);
+            }
+            UIEvent::SpawnTrigger { index, position, rotation } => {
+                let trigger_size = CONFIG_STATE.lock().unwrap().trigger_sizes[index];
+                if PATHLOG.lock().unwrap().is_empty() {
+                    PATHLOG.lock().unwrap().create_trigger(index, position, rotation, trigger_size);
+                    EVENTS.lock().unwrap().push_back(UIEvent::SpawnTeleport { index });
                 }
-                UIEvent::SaveConfig => {
-                    self.config.write("celestial.ini".to_string());
-                },
-                UIEvent::LoadConfig => {
-                    if let Err(e) = self.config.read("celestial.ini".to_string()) {
-                        println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
-                    }
-                },
-                UIEvent::SelectPath { path_id, collection_id, modifier } => {
-                    let collection = self.pathlog.get_collection(collection_id).unwrap().clone();
-                    let path = self.pathlog.path(&path_id).unwrap().clone();
-
-                    let selected = self.pathlog.selected_paths.get_mut(&collection.id()).unwrap();
-
-                    match modifier {
-                        1 => {
-                            let last_id = *selected.last().unwrap_or(&(path.id()));
-                            let mut last_pos = collection.paths().iter().position(|p| *p == last_id).unwrap();
-                            let mut this_pos = collection.paths().iter().position(|p| *p == path.id()).unwrap();
-                            if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
-                            for p in &collection.paths()[this_pos..last_pos] {
-                                if let Some(pos) = selected.iter().position(|id| *id == *p) { selected.remove(pos);}
-                                else { selected.push(*p) }
-                            }
-                        },
-                        2 => {
-                            if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
-                            else { selected.push(path.id()) }
-                        },
-                        _ => {
-                            selected.clear();
-                            selected.push(path.id());
-                        }
-                    }
-                    self.updates.paths = true;
-                }
-                UIEvent::Teleport { index } => {
-                    if let Some(teleport) = &self.ui_state.teleports[index] {
-                        gamedata::teleport_player(teleport.location, teleport.rotation);
-                        if let Some(cam_rotation) = teleport.camera_rotation {
-                            gamedata::set_camera_rotation(cam_rotation);
-                        }
-                        loop_events.push_back(UIEvent::ResetRecording);
-                    }
-                }
-                UIEvent::SpawnTeleport { index } => {
-                    if index > 1 { continue; }
-                    self.ui_state.teleports[index] = Some(Teleport {
-                        location: gamedata::get_player_position(),
-                        rotation: gamedata::get_player_rotation(),
-                        camera_rotation: Some(gamedata::get_camera_rotation()),
-                    })
+                else {
+                    // TODO: popup warning
                 }
             }
-        }
+            UIEvent::StartRecording => {
+                PATHLOG.lock().unwrap().start();
+            }
+            UIEvent::StopRecording => {
+                let mut pathlog = PATHLOG.lock().unwrap();
 
-        self.events.append(&mut loop_events);
+                let recording_path_id = pathlog.recording_path.id();
+                pathlog.mute_paths.insert(recording_path_id, false);
+                pathlog.solo_paths.insert(recording_path_id, false);
+                pathlog.stop();
+
+                drop(pathlog);
+
+                RENDER_UPDATES.lock().unwrap().paths = true;
+            }
+            UIEvent::ResetRecording => {
+                PATHLOG.lock().unwrap().reset();
+            }
+            UIEvent::ClearTriggers => {
+                PATHLOG.lock().unwrap().clear_triggers();
+            }
+            UIEvent::CreateCollection => {
+                PATHLOG.lock().unwrap().create_collection();
+            }
+            UIEvent::RenameCollection { id, new_name } => {
+                PATHLOG.lock().unwrap().rename_collection(id, new_name);
+            }
+            UIEvent::DeleteCollection { id } => {
+                PATHLOG.lock().unwrap().delete_collection(id);
+                RENDER_UPDATES.lock().unwrap().paths = true;
+            }
+            UIEvent::ToggleMute { id } => {
+                let mut pathlog = PATHLOG.lock().unwrap();
+
+                if let Some(b) = pathlog.mute_paths.get_mut(&id) { *b ^= true; }
+                if let Some(b) = pathlog.mute_collections.get_mut(&id) { *b ^= true; }
+                pathlog.update_visible();
+
+                drop(pathlog);
+            },
+            UIEvent::ToggleSolo { id } => {
+                let mut pathlog = PATHLOG.lock().unwrap();
+
+                if let Some(b) = pathlog.solo_paths.get_mut(&id) { *b ^= true; }
+                if let Some(b) = pathlog.solo_collections.get_mut(&id) { *b ^= true; }
+                pathlog.update_visible();
+
+                drop(pathlog);
+            },
+            UIEvent::ToggleActive { id } => {
+                let mut pathlog = PATHLOG.lock().unwrap();
+
+                if pathlog.active_collection == Some(id) {
+                    pathlog.active_collection = None;
+                }
+                else {
+                    pathlog.active_collection = Some(id);
+                }
+
+                drop(pathlog);
+            }
+            UIEvent::ToggleGoldFilter { collection_id } => {
+                let mut pathlog = PATHLOG.lock().unwrap();
+
+                if !pathlog.filters.contains_key(&collection_id) {
+                    pathlog.filters.insert(collection_id, HighPassFilter::Gold);
+                }
+                else {
+                    if let Some(HighPassFilter::Gold) = pathlog.filters.get(&collection_id) {
+                        pathlog.filters.remove(&collection_id);
+                    }
+                    else {
+                        *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Gold;
+                    }
+                }
+
+                drop(pathlog);
+            }
+            UIEvent::SetPathFilter { collection_id, path_id } => {
+                let mut pathlog = PATHLOG.lock().unwrap();
+
+                match pathlog.filters.get_mut(&collection_id) {
+                    Some(HighPassFilter::Path{ id }) => {
+                        if *id == path_id {
+                            pathlog.filters.remove(&collection_id);
+                        }
+                        else {
+                            *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
+                        }
+                    },
+                    Some(HighPassFilter::Gold) => {
+                        *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
+                    }
+                    _ => {
+                        pathlog.filters.insert(collection_id, HighPassFilter::Path{ id: path_id });
+                    }
+                }
+
+                drop(pathlog);
+            }
+            UIEvent::SaveComparison => {
+                if UISTATE.lock().unwrap().file_path_rx.is_none() {
+                    let (tx, rx) = mpsc::channel();
+                    thread::spawn(move || {
+                            tx.send(FileDialog::new().show_save_single_file()).unwrap();
+                    });
+                    UISTATE.lock().unwrap().file_path_rx = Some(RX::Save { rx });
+                    loop_events.push_back(UIEvent::SaveComparison);
+                }
+                else if let Some(RX::Save { rx }) = &UISTATE.lock().unwrap().file_path_rx {
+                    if let Ok(dialog_result) = rx.try_recv() {
+                        if let Ok(Some(path)) = dialog_result {
+                            PATHLOG.lock().unwrap().save_comparison(path.to_str().unwrap().to_string());
+                        }
+                        UISTATE.lock().unwrap().file_path_rx = None;
+                    }
+                    else { loop_events.push_back(UIEvent::SaveComparison); }
+                }
+            }
+            UIEvent::LoadComparison => {
+                if UISTATE.lock().unwrap().file_path_rx.is_none() {
+                    let (tx, rx) = mpsc::channel();
+                    thread::spawn(move || {
+                        tx.send(FileDialog::new().show_open_single_file()).unwrap();
+                    });
+                    UISTATE.lock().unwrap().file_path_rx = Some(RX::Load { rx });
+                    loop_events.push_back(UIEvent::LoadComparison);
+                }
+                else if let Some(RX::Load { rx }) = &UISTATE.lock().unwrap().file_path_rx {
+                    if let Ok(dialog_result) = rx.try_recv() {
+                        if let Ok(Some(path)) = dialog_result {
+                            if let Err(e) = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string()) {
+                                UISTATE.lock().unwrap().file_path_rx = None;
+                                error!("{e}");
+                                continue;
+                            }
+
+                            if let Some(start_trigger) = PATHLOG.lock().unwrap().main_triggers[0] {
+                                UISTATE.lock().unwrap().teleports[0] = Some(Teleport {
+                                    location: start_trigger.position,
+                                    rotation: start_trigger.rotation(),
+                                    camera_rotation: None,
+                                })
+                            }
+
+                            if let Some(end_trigger) = PATHLOG.lock().unwrap().main_triggers[1] {
+                                UISTATE.lock().unwrap().teleports[1] = Some(Teleport {
+                                    location: end_trigger.position,
+                                    rotation: end_trigger.rotation(),
+                                    camera_rotation: None,
+                                })
+                            }
+                        }
+                        UISTATE.lock().unwrap().file_path_rx = None;
+                        RENDER_UPDATES.lock().unwrap().paths = true;
+                    }
+                    else { loop_events.push_back(UIEvent::LoadComparison); }
+                }
+            }
+            UIEvent::SaveConfig => {
+                CONFIG_STATE.lock().unwrap().write("celestial.ini".to_string());
+            },
+            UIEvent::LoadConfig => {
+                if let Err(e) = CONFIG_STATE.lock().unwrap().read("celestial.ini".to_string()) {
+                    println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
+                }
+            },
+            UIEvent::SelectPath { path_id, collection_id, modifier } => {
+                let pathlog = PATHLOG.lock().unwrap();
+
+                let collection = pathlog.get_collection(collection_id).unwrap().clone();
+                let path = pathlog.path(&path_id).unwrap().clone();
+
+                let mut selected = pathlog.selected_paths.get(&collection_id).unwrap().clone();
+
+                drop(pathlog);
+
+                match modifier {
+                    1 => {
+                        let last_id = *selected.last().unwrap_or(&(path.id()));
+                        let mut last_pos = collection.paths().iter().position(|p| *p == last_id).unwrap();
+                        let mut this_pos = collection.paths().iter().position(|p| *p == path.id()).unwrap();
+                        if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
+                        for p in &collection.paths()[this_pos..last_pos] {
+                            if let Some(pos) = selected.iter().position(|id| *id == *p) { selected.remove(pos);}
+                            else { selected.push(*p) }
+                        }
+                    },
+                    2 => {
+                        if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
+                        else { selected.push(path.id()) }
+                    },
+                    _ => {
+                        selected.clear();
+                        selected.push(path.id());
+                    }
+                }
+
+                PATHLOG.lock().unwrap().selected_paths.insert(collection_id, selected);
+                RENDER_UPDATES.lock().unwrap().paths = true;
+            }
+            UIEvent::Teleport { index } => {
+                if let Some(teleport) = &UISTATE.lock().unwrap().teleports[index] {
+                    gamedata::teleport_player(teleport.location, teleport.rotation);
+                    if let Some(cam_rotation) = teleport.camera_rotation {
+                        gamedata::set_camera_rotation(cam_rotation);
+                    }
+                    loop_events.push_back(UIEvent::ResetRecording);
+                }
+            }
+            UIEvent::SpawnTeleport { index } => {
+                if index > 1 { continue; }
+                UISTATE.lock().unwrap().teleports[index] = Some(Teleport {
+                    location: gamedata::get_player_position(),
+                    rotation: gamedata::get_player_rotation(),
+                    camera_rotation: Some(gamedata::get_camera_rotation()),
+                })
+            }
+        }
     }
+
+    EVENTS.lock().unwrap().append(&mut loop_events);
 }
 
 unsafe fn init_globals(this: &IDXGISwapChain) {
@@ -433,16 +453,19 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
     unsafe {
         init_globals(&this);
 
-        if let Ok(mut state) = GLOBAL_STATE.lock() {
-            if gamedata::get_is_loading() {
-                state.pathlog.pause();
-            } else {
-                state.pathlog.unpause();
-            }
+        let mut pathlog = PATHLOG.lock().unwrap();
 
-            let pathlog_updates = state.pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
-            state.updates.or(pathlog_updates);
+        if gamedata::get_is_loading() {
+            pathlog.pause();
+        } else {
+            pathlog.unpause();
         }
+
+        let pathlog_updates = pathlog.update(&gamedata::get_player_position(), &gamedata::get_player_rotation());
+
+        drop(pathlog);
+
+        RENDER_UPDATES.lock().unwrap().or(pathlog_updates);
 
         if let Some(pintar) = PINTAR.as_mut() {
             let view_proj = gamedata::get_view_matrix();
@@ -465,7 +488,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             shapes_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
 
             pintar.clear_vertex_group(RECORDING_GROUP.to_string());
-            render_path(pintar, RECORDING_GROUP.to_string(), &GLOBAL_STATE.lock().unwrap().pathlog.recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
+            render_path(pintar, RECORDING_GROUP.to_string(), &PATHLOG.lock().unwrap().recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
 
             pintar.clear_vertex_group(SHAPES_GROUP.to_string());
             render_custom_shapes(pintar);
@@ -531,9 +554,7 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                     })
                 .expect("successful render");
 
-            if let Ok(mut state) = GLOBAL_STATE.lock() {
-                state.process_events();
-            }
+            process_events();
         }
     }
 
@@ -542,8 +563,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 }
 
 fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f32; 4], thickness: f32) {
-    // let path = GLOBAL_STATE.lock().unwrap().pathlog.path(&path_id).unwrap().clone();
-
     for segment in path.segments() {
         if segment.len() < 2 { continue; }
         pintar.add_line(vertex_group.clone(), segment, color, thickness);
@@ -552,22 +571,25 @@ fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f
 
 // fn render_all_paths(pintar: &mut Pintar, egui: &UIState, config: &ConfigState, pathlog: &PathLog) {
 fn render_all_paths(pintar: &mut Pintar) {
-    let state = GLOBAL_STATE.lock().unwrap();
+    if !RENDER_UPDATES.lock().unwrap().paths { return; }
 
-    if !state.updates.paths { return; }
+    let pathlog = PATHLOG.lock().unwrap();
 
-    let compared_paths = state.pathlog.compared_paths().paths().clone();
-    let ignored_paths = state.pathlog.ignored_paths().clone();
-    let selected_paths = state.pathlog.selected_paths.clone();
+    let compared_paths = pathlog.compared_paths().paths().clone();
+    let ignored_paths = pathlog.ignored_paths().clone();
+    let selected_paths = pathlog.selected_paths.clone();
+    let comparison_mode = pathlog.comparison_mode();
 
-    let comparison_mode = state.pathlog.comparison_mode();
+    drop(pathlog);
 
-    let fast_color = state.config.fast_color;
-    let slow_color = state.config.slow_color;
-    let gold_color = state.config.gold_color;
-    let select_color = state.config.select_color;
+    let config = CONFIG_STATE.lock().unwrap();
 
-    drop(state);
+    let fast_color = config.fast_color;
+    let slow_color = config.slow_color;
+    let gold_color = config.gold_color;
+    let select_color = config.select_color;
+
+    drop(config);
 
     // let mut visible_collection = PathCollection::new("Visible".to_string());
     let mut selected : Vec<Uuid> = Vec::new();
@@ -616,9 +638,8 @@ fn render_all_paths(pintar: &mut Pintar) {
             thick = 0.04;
         }
 
-        if let Ok(state) = GLOBAL_STATE.lock() {
-            render_path(pintar, PATHS_GROUP.to_string(), &state.pathlog.path(&path_id).unwrap(), color, thick);
-        }
+        let pathlog = PATHLOG.lock().unwrap();
+        render_path(pintar, PATHS_GROUP.to_string(), &pathlog.path(&path_id).unwrap(), color, thick);
     }
 
     // let ignored_paths = visible_paths[1].paths();
@@ -632,15 +653,19 @@ fn render_all_paths(pintar: &mut Pintar) {
 }
 
 fn render_triggers(pintar: &mut Pintar) {
-    let state = GLOBAL_STATE.lock().unwrap();
+    let pathlog = PATHLOG.lock().unwrap();
 
-    let checkpoint_triggers = state.pathlog.checkpoint_triggers.clone();
-    let main_triggers = state.pathlog.main_triggers;
+    let checkpoint_triggers = pathlog.checkpoint_triggers.clone();
+    let main_triggers = pathlog.main_triggers;
 
-    let checkpoint_color = state.config.checkpoint_color;
-    let trigger_colors = state.config.trigger_colors;
+    drop(pathlog);
 
-    drop(state);
+    let config = CONFIG_STATE.lock().unwrap();
+
+    let checkpoint_color = config.checkpoint_color;
+    let trigger_colors = config.trigger_colors;
+
+    drop(config);
 
     for collider in &checkpoint_triggers {
         pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
@@ -654,13 +679,17 @@ fn render_triggers(pintar: &mut Pintar) {
 }
 
 fn render_teleports(pintar: &mut Pintar) {
-    let state = GLOBAL_STATE.lock().unwrap();
+    let config = CONFIG_STATE.lock().unwrap();
 
-    let trigger_colors = state.config.trigger_colors;
+    let trigger_colors = config.trigger_colors;
 
-    let teleports = state.ui_state.teleports;
+    drop(config);
 
-    drop(state);
+    let ui_state = UISTATE.lock().unwrap();
+
+    let teleports = ui_state.teleports;
+
+    drop(ui_state);
 
     if let Some(teleport) = &teleports[0] {
         let pos = teleport.location;
@@ -685,11 +714,11 @@ fn render_teleports(pintar: &mut Pintar) {
 
 // fn render_custom_shapes(pintar: &mut Pintar, egui: &UIState) {
 fn render_custom_shapes(pintar: &mut Pintar) {
-    let state = GLOBAL_STATE.lock().unwrap();
+    let ui_state = UISTATE.lock().unwrap();
 
-    let custom_shapes = state.ui_state.custom_shapes.clone();
+    let custom_shapes = ui_state.custom_shapes.clone();
 
-    drop(state);
+    drop(ui_state);
 
     for shape in &custom_shapes {
         if shape.1 { continue; }
