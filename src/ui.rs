@@ -7,7 +7,8 @@ use egui_keybind::Keybind;
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
+use crate::pathlog::ComparisonMode;
+use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
@@ -81,6 +82,9 @@ pub enum UIEvent {
     SpawnTeleport {
         index: usize,
     },
+    RenderUpdate {
+        update: RenderUpdates,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -311,6 +315,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     let active_collection = pathlog.active_collection;
     let path_collections_len = pathlog.collections().len();
+    let mut comparison_mode = pathlog.comparison().mode;
 
     drop(pathlog);
 
@@ -332,6 +337,18 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut mute_toggles : Vec<Uuid> = Vec::new();
     let mut solo_toggles : Vec<Uuid> = Vec::new();
     let mut to_clear : Vec<Uuid> = Vec::new();
+
+    ui.separator();
+
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+        egui::ComboBox::new("comp_mode_drop_down", "Comparison Mode")
+            .selected_text(format!("{:?}", comparison_mode))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut comparison_mode, pathlog::ComparisonMode::All, "All");
+                ui.selectable_value(&mut comparison_mode, pathlog::ComparisonMode::Gold, "Gold");
+                ui.selectable_value(&mut comparison_mode, pathlog::ComparisonMode::Median, "Median");
+            });
+        });
 
     ui.separator();
 
@@ -515,6 +532,11 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     RENDER_UPDATES.lock().unwrap().paths = !to_clear.is_empty();
 
     let mut pathlog = PATHLOG.lock().unwrap();
+
+    if pathlog.comparison().mode != comparison_mode {
+        pathlog.set_comparison_mode(comparison_mode);
+        new_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
+    }
 
     for collection_id in to_clear {
         pathlog.selected_paths.get_mut(&collection_id).unwrap().clear();

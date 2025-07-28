@@ -130,6 +130,7 @@ pub enum RX {
 //     average_player_speed: f32,
 // }
 
+#[derive(Clone, Copy)]
 pub struct RenderUpdates {
     pub paths: bool,
     pub triggers: bool,
@@ -140,6 +141,22 @@ pub struct RenderUpdates {
 impl RenderUpdates {
     pub fn new() -> Self {
         RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false }
+    }
+
+    pub fn paths() -> Self {
+        RenderUpdates { paths: true, triggers: false, teleports: false, shapes: false }
+    }
+
+    pub fn triggers() -> Self {
+        RenderUpdates { paths: false, triggers: true, teleports: false, shapes: false }
+    }
+
+    pub fn teleports() -> Self {
+        RenderUpdates { paths: false, triggers: false, teleports: true, shapes: false }
+    }
+
+    pub fn shapes() -> Self {
+        RenderUpdates { paths: false, triggers: false, teleports: false, shapes: true }
     }
 
     pub fn or(&mut self, other: RenderUpdates) {
@@ -164,7 +181,7 @@ fn process_events() {
         match event {
             UIEvent::DeletePath { path_id } => {
                 PATHLOG.lock().unwrap().delete_path(path_id);
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             }
             UIEvent::ChangeDirectMode { new } => {
                 PATHLOG.lock().unwrap().set_direct_mode(new);
@@ -198,7 +215,7 @@ fn process_events() {
 
                 drop(pathlog);
 
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             }
             UIEvent::ResetRecording => {
                 PATHLOG.lock().unwrap().reset();
@@ -214,7 +231,7 @@ fn process_events() {
             }
             UIEvent::DeleteCollection { id } => {
                 PATHLOG.lock().unwrap().delete_collection(id);
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             }
             UIEvent::ToggleMute { id } => {
                 let mut pathlog = PATHLOG.lock().unwrap();
@@ -225,7 +242,7 @@ fn process_events() {
 
                 drop(pathlog);
 
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             },
             UIEvent::ToggleSolo { id } => {
                 let mut pathlog = PATHLOG.lock().unwrap();
@@ -236,7 +253,7 @@ fn process_events() {
 
                 drop(pathlog);
 
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             },
             UIEvent::ToggleActive { id } => {
                 let mut pathlog = PATHLOG.lock().unwrap();
@@ -354,7 +371,7 @@ fn process_events() {
                         }
 
                         UISTATE.lock().unwrap().file_path_rx = None;
-                        RENDER_UPDATES.lock().unwrap().paths = true;
+                        loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
                     }
                     else { loop_events.push_back(UIEvent::LoadComparison); }
                 }
@@ -399,7 +416,7 @@ fn process_events() {
                 }
 
                 PATHLOG.lock().unwrap().selected_paths.insert(collection_id, selected);
-                RENDER_UPDATES.lock().unwrap().paths = true;
+                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             }
             UIEvent::Teleport { index } => {
                 if let Some(teleport) = &UISTATE.lock().unwrap().teleports[index] {
@@ -417,6 +434,13 @@ fn process_events() {
                     rotation: gamedata::get_player_rotation(),
                     camera_rotation: Some(gamedata::get_camera_rotation()),
                 })
+            }
+            UIEvent::RenderUpdate { update } => {
+                RENDER_UPDATES.lock().unwrap().or(update);
+
+                if update.paths {
+                    PATHLOG.lock().unwrap().update_visible();
+                }
             }
         }
     }
@@ -642,7 +666,7 @@ fn render_all_paths(pintar: &mut Pintar) {
             thick = 0.02;
         }
 
-        if matches!(comparison.mode, ComparisonMode::Average) {
+        if matches!(comparison.mode, ComparisonMode::Median) {
             for ignored_id in &ignored_paths[i] {
                 let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
                 render_path(pintar, PATHS_GROUP.to_string(), &PATHLOG.lock().unwrap().path(&ignored_id).unwrap(), ignored_color, thick);
@@ -657,15 +681,6 @@ fn render_all_paths(pintar: &mut Pintar) {
         let pathlog = PATHLOG.lock().unwrap();
         render_path(pintar, PATHS_GROUP.to_string(), &pathlog.path(&path_id).unwrap(), color, thick);
     }
-
-    // let ignored_paths = visible_paths[1].paths();
-    // for i in 0..ignored_paths.len() {
-    //     let path_id = ignored_paths[i];
-
-    //     match comparison_mode {
-    //         Comparison::Average =>
-    //     }
-    // }
 }
 
 fn render_triggers(pintar: &mut Pintar) {

@@ -13,11 +13,11 @@ use crate::{pathdata::*, RenderUpdates};
 pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 // pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComparisonMode {
     All,
     Gold,
-    Average,
+    Median,
 }
 
 #[derive(Clone, Copy)]
@@ -158,9 +158,8 @@ impl PathLog {
         for path in self.paths.values() {
             let mut pos = 0;
             for i in 0..all_compared.len() {
-                if path.time() >= self.path(&all_compared[i]).unwrap().time() { continue; }
                 pos = i;
-                break;
+                if path.time() < self.path(&all_compared[i]).unwrap().time() { break; }
             }
             all_compared.insert(pos, path.id());
         }
@@ -186,7 +185,7 @@ impl PathLog {
                 continue;
             }
 
-            if matches!(self.comparison.mode, ComparisonMode::Average) {
+            if matches!(self.comparison.mode, ComparisonMode::Median) {
                 let position =  all_compared.iter().position(|id| *id == collection.paths()[collection.paths().len() / 2]).unwrap();
                 self.compared_paths.push((collection.paths()[collection.paths().len() / 2], position));
             }
@@ -200,7 +199,7 @@ impl PathLog {
 
                 if !collection_visible || !path_visible { continue; }
 
-                if matches!(self.comparison.mode, ComparisonMode::Average) {
+                if matches!(self.comparison.mode, ComparisonMode::Median) {
                     if self.compared_paths.iter().find(|x| x.0 == path_id).is_some() { continue; }
                     self.ignored_paths[c].push(path_id);
                     continue;
@@ -385,6 +384,10 @@ impl PathLog {
 
     pub fn set_autoreset(&mut self, mode: bool) {
         self.autoreset = mode;
+    }
+
+    pub fn set_comparison_mode(&mut self, mode: ComparisonMode) {
+        self.comparison.mode = mode;
     }
 
 	// pub fn insert(&mut self, new_path: &Path, collection_id: Uuid) {
