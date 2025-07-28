@@ -287,16 +287,20 @@ fn process_events() {
                 drop(pathlog);
             }
             UIEvent::SaveComparison => {
-                if UISTATE.lock().unwrap().file_path_rx.is_none() {
+                let mut ui_state = UISTATE.lock().unwrap();
+
+                if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
                     thread::spawn(move || {
                             tx.send(FileDialog::new().show_save_single_file()).unwrap();
                     });
-                    UISTATE.lock().unwrap().file_path_rx = Some(RX::Save { rx });
+                    ui_state.file_path_rx = Some(RX::Save { rx });
                     loop_events.push_back(UIEvent::SaveComparison);
                 }
-                else if let Some(RX::Save { rx }) = &UISTATE.lock().unwrap().file_path_rx {
+                else if let Some(RX::Save { rx }) = &ui_state.file_path_rx {
                     if let Ok(dialog_result) = rx.try_recv() {
+                        drop(ui_state);
+
                         if let Ok(Some(path)) = dialog_result {
                             PATHLOG.lock().unwrap().save_comparison(path.to_str().unwrap().to_string());
                         }
@@ -306,18 +310,24 @@ fn process_events() {
                 }
             }
             UIEvent::LoadComparison => {
-                if UISTATE.lock().unwrap().file_path_rx.is_none() {
+                let mut ui_state = UISTATE.lock().unwrap();
+
+                if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
                     thread::spawn(move || {
                         tx.send(FileDialog::new().show_open_single_file()).unwrap();
                     });
-                    UISTATE.lock().unwrap().file_path_rx = Some(RX::Load { rx });
+                    ui_state.file_path_rx = Some(RX::Load { rx });
                     loop_events.push_back(UIEvent::LoadComparison);
                 }
-                else if let Some(RX::Load { rx }) = &UISTATE.lock().unwrap().file_path_rx {
+                else if let Some(RX::Load { rx }) = &ui_state.file_path_rx {
                     if let Ok(dialog_result) = rx.try_recv() {
+                        drop(ui_state);
+
                         if let Ok(Some(path)) = dialog_result {
-                            if let Err(e) = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string()) {
+                            let load_res = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string());
+                            // if let Err(e) = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string()) {
+                            if let Err(e) = load_res {
                                 UISTATE.lock().unwrap().file_path_rx = None;
                                 error!("{e}");
                                 continue;
@@ -339,6 +349,7 @@ fn process_events() {
                                 })
                             }
                         }
+
                         UISTATE.lock().unwrap().file_path_rx = None;
                         RENDER_UPDATES.lock().unwrap().paths = true;
                     }
@@ -496,7 +507,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
             render_teleports(pintar);
 
-            pintar.clear_vertex_group(PATHS_GROUP.to_string());
             render_all_paths(pintar);
 
             pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
@@ -569,9 +579,12 @@ fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f
     }
 }
 
-// fn render_all_paths(pintar: &mut Pintar, egui: &UIState, config: &ConfigState, pathlog: &PathLog) {
 fn render_all_paths(pintar: &mut Pintar) {
     if !RENDER_UPDATES.lock().unwrap().paths { return; }
+
+    RENDER_UPDATES.lock().unwrap().paths = false;
+
+    pintar.clear_vertex_group(PATHS_GROUP.to_string());
 
     let pathlog = PATHLOG.lock().unwrap();
 
@@ -626,12 +639,12 @@ fn render_all_paths(pintar: &mut Pintar) {
             thick = 0.02;
         }
 
-        // for path_id in &ignored_paths[i] {
-        //     if matches!(comparison_mode, Comparison::Average) {
-        //         let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
-        //         render_path(pintar, &GLOBAL_STATE.lock().unwrap().pathlog.path(&path_id).unwrap(), ignored_color, thick);
-        //     }
-        // }
+        if matches!(comparison_mode, Comparison::Average) {
+            for path_id in &ignored_paths[i] {
+                let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
+                render_path(pintar, PATHS_GROUP.to_string(), &PATHLOG.lock().unwrap().path(&path_id).unwrap(), ignored_color, thick);
+            }
+        }
 
         if selected.contains(&path_id) {
             color = select_color;

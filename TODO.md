@@ -1,16 +1,17 @@
 ### Todo
 
-- replace static mut refs with mutexes or some shit !
-- compare collections
+- fix mute/solo + updates
 
-- save timer position
-- scale ui by window resolution
+- compare collections (wip)
+- change teleports again lmao
+
 - move paths between collections
 - move collections
+
 - get some cool screenshots for the github
-- popup messages
 - cleaner error handling (wip)
 - limit drawn lines per collection ?
+
 - fix all the bugs :)
 
 ### Suggested Features / Changes
@@ -21,7 +22,10 @@
 
 ### Planned Features
 
+- save timer position
+- scale ui by window resolution
+- popup messages
 - culling
-- double buffered recording so the filled buffer can be saved to disk and discarded when other gets full
+- double buffered recording
 - section triggers (wip)
 - use ingame triggers
