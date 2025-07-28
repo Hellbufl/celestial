@@ -5,7 +5,6 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex};
 use std::thread;
-use std::time::Instant;
 use native_dialog::FileDialog;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
@@ -225,6 +224,8 @@ fn process_events() {
                 pathlog.update_visible();
 
                 drop(pathlog);
+
+                RENDER_UPDATES.lock().unwrap().paths = true;
             },
             UIEvent::ToggleSolo { id } => {
                 let mut pathlog = PATHLOG.lock().unwrap();
@@ -234,6 +235,8 @@ fn process_events() {
                 pathlog.update_visible();
 
                 drop(pathlog);
+
+                RENDER_UPDATES.lock().unwrap().paths = true;
             },
             UIEvent::ToggleActive { id } => {
                 let mut pathlog = PATHLOG.lock().unwrap();
@@ -588,10 +591,10 @@ fn render_all_paths(pintar: &mut Pintar) {
 
     let pathlog = PATHLOG.lock().unwrap();
 
-    let compared_paths = pathlog.compared_paths().paths().clone();
+    let compared_paths = pathlog.compared_paths().clone();
     let ignored_paths = pathlog.ignored_paths().clone();
     let selected_paths = pathlog.selected_paths.clone();
-    let comparison_mode = pathlog.comparison_mode();
+    let comparison = pathlog.comparison();
 
     drop(pathlog);
 
@@ -611,7 +614,7 @@ fn render_all_paths(pintar: &mut Pintar) {
     }
 
     for i in 0..compared_paths.len() {
-        let path_id = compared_paths[i];
+        let (path_id, position) = compared_paths[i];
 
         let fast = fast_color;
         let slow = slow_color;
@@ -619,16 +622,16 @@ fn render_all_paths(pintar: &mut Pintar) {
         let mut color: [f32; 4];
         let mut thick: f32;
 
-        if i == 0 {
+        if position == 0 {
             color = gold_color;
             thick = 0.04;
         }
-        else if compared_paths.len() == 2 {
+        else if comparison.len == 2 {
             color = slow_color;
             thick = 0.02;
         }
         else {
-            let p = (i - 1) as f32 / (compared_paths.len() - 2) as f32;
+            let p = (position - 1) as f32 / (comparison.len - 2) as f32;
 
             color = [
                 lerp(fast[0], slow[0], p),
@@ -639,10 +642,10 @@ fn render_all_paths(pintar: &mut Pintar) {
             thick = 0.02;
         }
 
-        if matches!(comparison_mode, Comparison::Average) {
-            for path_id in &ignored_paths[i] {
+        if matches!(comparison.mode, ComparisonMode::Average) {
+            for ignored_id in &ignored_paths[i] {
                 let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
-                render_path(pintar, PATHS_GROUP.to_string(), &PATHLOG.lock().unwrap().path(&path_id).unwrap(), ignored_color, thick);
+                render_path(pintar, PATHS_GROUP.to_string(), &PATHLOG.lock().unwrap().path(&ignored_id).unwrap(), ignored_color, thick);
             }
         }
 

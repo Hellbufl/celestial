@@ -14,10 +14,16 @@ pub const DEFAULT_COLLECTION_NAME : &str = "New Collection";
 // pub const DIRECT_COLLECTION_NAME : &str = "Direct Paths";
 
 #[derive(Clone, Copy)]
-pub enum Comparison {
+pub enum ComparisonMode {
     All,
     Gold,
     Average,
+}
+
+#[derive(Clone, Copy)]
+pub struct Comparison {
+    pub mode: ComparisonMode,
+    pub len: usize,
 }
 
 pub struct PathLog {
@@ -50,10 +56,9 @@ pub struct PathLog {
     pub solo_collections: HashMap<Uuid, bool>,
     pub selected_paths: HashMap<Uuid, Vec<Uuid>>,
 
-    comparison_mode: Comparison,
-    // visible: [Vec<Uuid>; 2],
-    // visible: [PathCollection; 2],
-    compared_paths: PathCollection,
+    comparison: Comparison,
+    // compared_paths: PathCollection,
+    compared_paths: Vec<(Uuid, usize)>,
     ignored_paths: Vec<Vec<Uuid>>,
 }
 
@@ -88,10 +93,9 @@ impl PathLog {
             solo_collections: HashMap::new(),
             selected_paths: HashMap::new(),
 
-            comparison_mode: Comparison::All,
-            // visible: [Vec::new(), Vec::new()],
-            // visible: [PathCollection::new("compared".to_string()), PathCollection::new("ignored".to_string())],
-            compared_paths: PathCollection::new("compared".to_string()),
+            comparison: Comparison { mode: ComparisonMode::All, len: 0 },
+            // compared_paths: PathCollection::new("compared".to_string()),
+            compared_paths: Vec::new(),
             ignored_paths: Vec::new(),
         };
 
@@ -105,7 +109,6 @@ impl PathLog {
         pathlog
     }
 
-	// pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3], updates: &mut RenderUpdates) {
 	pub fn update(&mut self, player_pos: &[f32; 3], player_rot: &[f32; 3]) -> RenderUpdates {
         let mut updates = RenderUpdates::new();
 
@@ -147,71 +150,81 @@ impl PathLog {
     }
 
     pub fn update_visible(&mut self) {
-        // info!("update_visible()...");
-        self.compared_paths.clear_paths();
+        self.compared_paths.clear();
         self.ignored_paths.clear();
 
-        let mut compared_paths : Vec<Uuid> = Vec::new();
+        let mut all_compared : Vec<Uuid> = Vec::new();
 
-        for collection in &self.path_collections {
+        for path in self.paths.values() {
+            let mut pos = 0;
+            for i in 0..all_compared.len() {
+                if path.time() >= self.path(&all_compared[i]).unwrap().time() { continue; }
+                pos = i;
+                break;
+            }
+            all_compared.insert(pos, path.id());
+        }
+
+        self.comparison.len = all_compared.len();
+
+        for c in 0..self.path_collections.len() {
+            let collection = &self.path_collections[c];
+
             self.ignored_paths.push(Vec::new());
+
             if collection.paths().is_empty() { continue; }
 
-            let mut visible = self.solo_collections.values().all(|s| !s);
-            if *self.solo_collections.get(&collection.id()).unwrap() { visible = true; }
-            if *self.mute_collections.get(&collection.id()).unwrap() { visible = false; }
+            let mut collection_visible = self.solo_collections.values().all(|s| !s);
+            if *self.solo_collections.get(&collection.id()).unwrap() { collection_visible = true; }
+            if *self.mute_collections.get(&collection.id()).unwrap() { collection_visible = false; }
 
-            if !visible { continue; }
+            // if visible { continue; }
 
-            if matches!(self.comparison_mode, Comparison::Gold) {
-                compared_paths.push(collection.paths()[0]);
+            if matches!(self.comparison.mode, ComparisonMode::Gold) {
+                let position =  all_compared.iter().position(|id| *id == collection.paths()[0]).unwrap();
+                self.compared_paths.push((collection.paths()[0], position));
                 continue;
             }
 
-            if matches!(self.comparison_mode, Comparison::Average) {
-                compared_paths.push(collection.paths()[collection.paths().len() / 2]);
+            if matches!(self.comparison.mode, ComparisonMode::Average) {
+                let position =  all_compared.iter().position(|id| *id == collection.paths()[collection.paths().len() / 2]).unwrap();
+                self.compared_paths.push((collection.paths()[collection.paths().len() / 2], position));
             }
 
             for i in 0..collection.paths().len() {
                 let path_id = collection.paths()[i];
 
-                if compared_paths.contains(&path_id) { continue; }
+                let mut path_visible = self.solo_paths.values().all(|s| !s);
+                if *self.solo_paths.get(&path_id).unwrap() { path_visible = true; }
+                if *self.mute_paths.get(&path_id).unwrap() { path_visible = false; }
 
-                let mut visible = self.solo_paths.values().all(|s| !s);
-                if *self.solo_paths.get(&path_id).unwrap() { visible = true; }
-                if *self.mute_paths.get(&path_id).unwrap() { visible = false; }
+                if !collection_visible || !path_visible { continue; }
 
-                if !visible { continue; }
-
-                if matches!(self.comparison_mode, Comparison::Average) {
-                    self.ignored_paths[i].push(path_id);
+                if matches!(self.comparison.mode, ComparisonMode::Average) {
+                    if self.compared_paths.iter().find(|x| x.0 == path_id).is_some() { continue; }
+                    self.ignored_paths[c].push(path_id);
                     continue;
                 }
 
-                compared_paths.push(path_id);
+                let position =  all_compared.iter().position(|id| *id == path_id).unwrap();
+                self.compared_paths.push((path_id, position));
             }
         }
-
-        for path_id in compared_paths {
-            self.add_path_to_collection(path_id, self.compared_paths.id());
-        }
-
-        // info!("done.");
     }
 
     fn add_path_to_collection(&mut self, path_id: Uuid, collection_id: Uuid) {
-        // info!("add_path_to_collection()...");
+        // let collection = match self.path_collections.iter_mut().find(|c| c.id() == collection_id) {
+        //     Some(coll) => coll,
+        //     None => {
+        //         if collection_id == self.compared_paths.id() { &mut self.compared_paths }
+        //         else { return; }
+        //     },
+        // };
 
-        let collection = match self.path_collections.iter_mut().find(|c| c.id() == collection_id) {
-            Some(coll) => coll,
-            None => {
-                if collection_id == self.compared_paths.id() { &mut self.compared_paths }
-                else { return; }
-            },
-        };
+        let collection = self.path_collections.iter_mut().find(|c| c.id() == collection_id).unwrap();
 
-        self.mute_paths.insert(path_id, false);
-        self.solo_paths.insert(path_id, false);
+        self.mute_paths.entry(path_id).or_insert(false);
+        self.solo_paths.entry(path_id).or_insert(false);
 
         let new_path = self.paths.get(&path_id).unwrap();
 
@@ -248,7 +261,7 @@ impl PathLog {
         // info!("done.");
     }
 
-    pub fn compared_paths(&self) -> &PathCollection {
+    pub fn compared_paths(&self) -> &Vec<(Uuid, usize)> {
         &self.compared_paths
     }
 
@@ -256,8 +269,8 @@ impl PathLog {
         &self.ignored_paths
     }
 
-    pub fn comparison_mode(&self) -> Comparison {
-        self.comparison_mode
+    pub fn comparison(&self) -> Comparison {
+        self.comparison
     }
 
     pub fn path(&self, path_id: &Uuid) -> Option<&Path> {
@@ -422,7 +435,7 @@ impl PathLog {
     }
 
     pub fn rename_collection(&mut self, collection_id: Uuid, mut new_name: String) {
-        if new_name == "" { new_name = "can't put nothing bro".to_string() }
+        if new_name == "" { new_name = DEFAULT_COLLECTION_NAME.to_string() }
         if let Some(collection) = self.path_collections.iter_mut().find(|c| c.id() == collection_id) {
             collection.name = new_name;
         }

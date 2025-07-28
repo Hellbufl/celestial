@@ -5,9 +5,9 @@ use egui::Color32;
 use uuid::Uuid;
 use egui_keybind::Keybind;
 
-use crate::config::{self, AsColor32, AsHsva, CompareKeybindToEvent};
+use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, pathlog, CONFIG_STATE, EVENTS, PATHLOG, RX, UISTATE};
+use crate::{gamedata, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
@@ -411,7 +411,6 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 }
 
                 if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // *state.ui_state.solo_collections.get_mut(&collection_id).unwrap() ^= true;
                     solo_toggles.push(collection_id);
                 }
 
@@ -511,6 +510,9 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
             });
             ui.end_row();
         });
+
+
+    RENDER_UPDATES.lock().unwrap().paths = !to_clear.is_empty();
 
     let mut pathlog = PATHLOG.lock().unwrap();
 

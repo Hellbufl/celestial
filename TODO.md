@@ -1,7 +1,5 @@
 ### Todo
 
-- fix mute/solo + updates
-
 - compare collections (wip)
 - change teleports again lmao
 

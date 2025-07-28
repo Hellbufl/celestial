@@ -100,28 +100,19 @@ impl Path {
         self.segments.clear();
         self.times.clear();
     }
-
-    // pub fn clear_segment(&mut self, index: usize) {
-    //     if self.segments.len() < index { return; }
-    //     self.segments[index].clear();
-    //     self.times[index] = 0;
-    // }
-
-    // pub fn from_file(file_path: String) -> Path {
-    //     let file_content = fs::read(file_path).expect("[Celestial][PathLog] Error: failed to read path file!");
-    //     serde_binary::from_vec(file_content, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to decode path file!")
-    // }
-
-	// pub fn to_file(&mut self, file_path: String) {
-    //     fs::write(
-    //         file_path, serde_binary::to_vec(self, binary_stream::Endian::Little).expect("[Celestial][PathLog] Error: failed to serialize path file!")
-    //     ).expect("[Celestial][PathLog] Error: failed to write path file!");
-    // }
 }
 
 impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool {
         self.id() == other.id()
+    }
+}
+
+impl std::fmt::Debug for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("Path")
+         .field("id", &self.id)
+         .finish()
     }
 }
 
@@ -151,21 +142,9 @@ impl BoxCollider {
         self.id
     }
 
-    // pub fn position(&self) -> [f32; 3] {
-    //     self.position.into()
-    // }
-
-    // pub fn set_position(&mut self, new_pos: [f32; 3]) {
-    //     self.position =
-    // }
-
     pub fn basis(&self) -> [[f32; 3]; 3] {
         self.basis.to_cols_array_2d()
     }
-
-    // pub fn size(&self) -> [f32; 3] {
-    //     self.size
-    // }
 
     pub fn rotation(&self) -> [f32; 3] {
         // let (rx, ry, rz) = self.basis.to_euler(glam::EulerRot::XYZ); // dunno why the angles are wrong. not just wrong range but this does weird flippery stuff
@@ -213,13 +192,6 @@ impl PathCollection {
         self.id
     }
 
-    // pub fn get_path(&self, id: Uuid) -> Option<&Path> {
-    //     match self.paths.iter().position(|p| p.id() == id) {
-    //         Some(i) => Some(&self.paths[i]),
-    //         None => None,
-    //     }
-    // }
-
     pub fn paths(&self) -> &Vec<Uuid> {
         &self.paths
     }
@@ -231,39 +203,6 @@ impl PathCollection {
     pub fn push(&mut self, path_id: Uuid) {
         self.paths.push(path_id);
     }
-
-    // pub fn add(&mut self, new_path: Path, high_pass: Option<&HighPassFilter>) {
-    //     match high_pass {
-    //         Some(HighPassFilter::GOLD) => {
-    //             if self.paths.len() == 0 || self.paths[0].time() > new_path.time() {
-    //                 self.paths.insert(0, new_path);
-    //             }
-    //             return;
-    //         }
-    //         Some(HighPassFilter::PATH { id }) => {
-    //             if self.paths.is_empty() {
-    //                 self.paths.push(new_path);
-    //                 return;
-    //             }
-
-    //             for i in 0..self.paths.len() {
-    //                 if self.paths[i].time() > new_path.time() {
-    //                     self.paths.insert(i, new_path);
-    //                     return;
-    //                 }
-    //                 if self.paths[i].id() == *id { return; }
-    //             }
-    //         }
-    //         None => {
-    //             for i in 0..self.paths.len() {
-    //                 if self.paths[i].time() < new_path.time() { continue; }
-    //                 self.paths.insert(i, new_path);
-    //                 return;
-    //             }
-    //             self.paths.push(new_path);
-    //         }
-    //     }
-    // }
 
     pub fn remove(&mut self, id: Uuid) {
         if let Some(index) = self.paths.iter().position(|p| *p == id) {
