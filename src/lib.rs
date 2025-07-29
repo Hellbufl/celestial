@@ -1,4 +1,4 @@
-#![allow(static_mut_refs)]
+#![allow(static_mut_refs)] // TODO: get this shit outta here
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -20,7 +20,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-use windows::Win32::Devices::HumanInterfaceDevice::{DirectInput8Create, IDirectInput8A, IDirectInputDevice8A, GUID_SysMouse, GUID_SysKeyboard};
+use windows::Win32::Devices::HumanInterfaceDevice::{
+    DirectInput8Create,
+    IDirectInput8A, IDirectInputDevice8A,
+    GUID_SysMouse, GUID_SysKeyboard, DIKEYBOARD_W, DIKEYBOARD_A, DIKEYBOARD_S, DIKEYBOARD_D, DIKEYBOARD_SPACE, DIKEYBOARD_ESCAPE, DIKEYBOARD_UP, DIKEYBOARD_DOWN, DIKEYBOARD_LEFT, DIKEYBOARD_RIGHT, DIKEYBOARD_RETURN,
+};
 use windows::core::ComInterface;
 use windows::core::Interface;
 use retour::GenericDetour;
@@ -899,7 +903,28 @@ extern "system" fn hk_keyboard_get_device_state(this: *mut c_void, param0: u32, 
             return HRESULT(1)
         }
 
-        KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1)
+        let _res = KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1);
+
+        let keys_pressed: [u8; 256] = std::ptr::read((param1) as *const _);
+
+        std::ptr::write_bytes(param1, 0, param0 as usize);
+
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_SPACE & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_SPACE & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_W & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_W & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_A & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_A & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_S & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_S & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_D & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_D & 0xFF) as usize], 1);
+
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_UP & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_UP & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_DOWN & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_DOWN & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_LEFT & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_LEFT & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_RIGHT & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_RIGHT & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_RETURN & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_RETURN & 0xFF) as usize], 1);
+        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_ESCAPE & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_ESCAPE & 0xFF) as usize], 1);
+
+        return HRESULT(1)
+
+        // KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1)
     }
 }
 

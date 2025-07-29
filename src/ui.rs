@@ -7,7 +7,6 @@ use egui_keybind::Keybind;
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::pathlog::ComparisonMode;
 use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
 
 #[derive(Clone, Copy, PartialEq)]

@@ -156,12 +156,12 @@ impl PathLog {
         let mut all_compared : Vec<Uuid> = Vec::new();
 
         for path in self.paths.values() {
-            let mut pos = 0;
-            for i in 0..all_compared.len() {
-                pos = i;
-                if path.time() < self.path(&all_compared[i]).unwrap().time() { break; }
+            if let Some(pos) = all_compared.iter().position(|id| path.time() < self.path(&id).unwrap().time()) {
+                all_compared.insert(pos, path.id());
             }
-            all_compared.insert(pos, path.id());
+            else {
+                all_compared.push(path.id());
+            }
         }
 
         self.comparison.len = all_compared.len();
