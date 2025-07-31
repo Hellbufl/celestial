@@ -3,6 +3,7 @@
 - compare collections (wip)
 - change teleports again lmao
 
+- 1.01 support
 - move paths between collections
 - move collections
 
