@@ -1,14 +1,13 @@
 ### Todo
 
-- compare collections (wip)
 - change teleports again lmao
+- 1.01 support (wip)
+- configurable input supression
 
-- 1.01 support
 - move paths between collections
 - move collections
 
 - get some cool screenshots for the github
-- cleaner error handling (wip)
 - limit drawn lines per collection ?
 
 - fix all the bugs :)

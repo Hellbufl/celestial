@@ -381,11 +381,13 @@ fn process_events() {
                 }
             }
             UIEvent::SaveConfig => {
-                CONFIG_STATE.lock().unwrap().write("celestial.ini".to_string());
+                if let Err(e) = CONFIG_STATE.lock().unwrap().write(CONFIG_FILE_NAME.to_string()) {
+                    error!("{e}");
+                }
             },
             UIEvent::LoadConfig => {
-                if let Err(e) = CONFIG_STATE.lock().unwrap().read("celestial.ini".to_string()) {
-                    println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
+                if let Err(e) = CONFIG_STATE.lock().unwrap().read(CONFIG_FILE_NAME.to_string()) {
+                    error!("{e}");
                 }
             },
             UIEvent::SelectPath { path_id, collection_id, modifier } => {

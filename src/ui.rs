@@ -922,7 +922,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
-    let mut events : VecDeque<UIEvent> = VecDeque::new();
+    let mut new_events : VecDeque<UIEvent> = VecDeque::new();
 
     ui.separator();
 
@@ -944,7 +944,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if toggle_switch(ui, &mut autosave).clicked() {
                     let new = autosave;
-                    events.push_back(UIEvent::ChangeAutosave { new });
+                    new_events.push_back(UIEvent::ChangeAutosave { new });
                 }
             });
             ui.end_row();
@@ -953,7 +953,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let new = autoreset;
                 if toggle_switch(ui, &mut autoreset).clicked() {
-                    events.push_back(UIEvent::ChangeAutoReset { new });
+                    new_events.push_back(UIEvent::ChangeAutoReset { new });
                 }
             });
             ui.end_row();
@@ -1154,14 +1154,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         if ui.add(egui::Button::new("Save")).clicked() {
-            // state.config.write("celestial.ini".to_string());
-            events.push_back(UIEvent::SaveConfig);
+            new_events.push_back(UIEvent::SaveConfig);
         }
         if ui.add(egui::Button::new("Load")).clicked() {
-            // if let Err(e) = state.config.read("celestial.ini".to_string()) {
-            //     println!("{e}"); // ini error doesn't implement tracing::Value. maybe change this
-            // }
-            events.push_back(UIEvent::LoadConfig);
+            new_events.push_back(UIEvent::LoadConfig);
         }
     });
 
@@ -1189,6 +1185,12 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     config.gold_color = gold_color;
     config.select_color = select_color;
     config.accent_colors = accent_colors;
+
+    drop(config);
+
+    let mut events = EVENTS.lock().unwrap();
+
+    events.append(&mut new_events);
 }
 
 // fn draw_credits_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState) {

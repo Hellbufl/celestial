@@ -4,7 +4,9 @@ use egui_keybind::Shortcut;
 use serde_json;
 use tracing::{info, error};
 
-const CONFIG_FILE_NAME : &str = "celestial.ini";
+use crate::error::Error;
+
+pub const CONFIG_FILE_NAME : &str = "celestial.ini";
 
 macro_rules! set_if_ok {
     ($dest:expr, $source:expr) => {
@@ -89,14 +91,16 @@ impl ConfigState {
     pub fn init() -> ConfigState {
         let mut state = Self::new();
 
-        if let Err(_) = state.read("data/".to_string() + CONFIG_FILE_NAME) {
-            info!("No config file");
+        if let Err(_) = state.read(CONFIG_FILE_NAME.to_string()) {
+            if let Err(e) = state.read("data/".to_string() + CONFIG_FILE_NAME) {
+                error!("{e}");
+            }
         }
 
         state
     }
 
-    pub fn read(&mut self, file_path: String) -> Result<i32, ini::Error> {
+    pub fn read(&mut self, file_path: String) -> Result<(), Error> {
         let conf = Ini::load_from_file(file_path.clone())?;
 
         let mut general_section = conf.section(Some("General"));
@@ -141,10 +145,10 @@ impl ConfigState {
         else { error!("'Extra' section not found in config file.") }
 
         info!("Config loaded");
-        Ok(0)
+        Ok(())
     }
 
-    pub fn write(&mut self, file_path: String) {
+    pub fn write(&mut self, file_path: String) -> Result<(), Error> {
         let mut conf = Ini::new();
 
         conf.with_section(Some("General"))
@@ -181,9 +185,10 @@ impl ConfigState {
         conf.with_section(Some("Extra"))
             .set("custom_shapes", self.shapes_enabled.to_string());
 
-        conf.write_to_file(file_path).unwrap();
+        conf.write_to_file(file_path)?;
 
         info!("Config saved");
+        Ok(())
     }
 }
 

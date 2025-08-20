@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::error::Error;
 
-const CURRENT_FILE_VERSION : &str = "0.5.1";
+const CURRENT_FILE_VERSION : &str = "0.6";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
