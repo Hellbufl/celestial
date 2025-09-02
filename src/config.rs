@@ -31,8 +31,14 @@ pub struct ConfigState {
 	pub reset_keybind: Shortcut,
 	pub clear_keybind: Shortcut,
 	pub teleport_keybinds: [Shortcut; 2],
-	pub spawn_teleport_keybinds: [Shortcut; 2],
+	// pub spawn_teleport_keybinds: [Shortcut; 2],
 	pub spawn_checkpoint_keybind: Shortcut,
+
+    pub extra_teleport_modifiers: Modifiers,
+    pub spawn_teleport_modifiers: Modifiers,
+
+	pub extra_teleport_keybinds: [Shortcut; 10],
+	pub spawn_teleport_keybinds: [Shortcut; 10],
 
 	pub trigger_sizes: [[f32; 3]; 2],
     pub timer_size: f32,
@@ -51,7 +57,7 @@ pub struct ConfigState {
 
 impl ConfigState {
     pub fn new() -> ConfigState {
-        ConfigState {
+        let mut config = ConfigState {
             // show_ui: true,
             direct_mode: false,
             autosave: false,
@@ -66,11 +72,17 @@ impl ConfigState {
                 Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::K}), None),
                 Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::L}), None),
             ],
-            spawn_teleport_keybinds: [
-                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
-                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Period}), None),
-            ],
+            // spawn_teleport_keybinds: [
+            //     Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
+            //     Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Period}), None),
+            // ],
             spawn_checkpoint_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::C}), None),
+
+            extra_teleport_modifiers: Modifiers { alt: true, ctrl: false, shift: false, mac_cmd: false, command: false },
+            spawn_teleport_modifiers: Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false },
+
+            extra_teleport_keybinds: [Default::default(); 10],
+            spawn_teleport_keybinds: [Default::default(); 10],
 
             trigger_sizes: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
             timer_size: 24.,
@@ -85,7 +97,12 @@ impl ConfigState {
             accent_colors: [egui::Color32::from_rgb(85, 149, 255), egui::Color32::from_rgb(156, 85, 255)],
 
             shapes_enabled: false,
-        }
+        };
+
+        config.generate_extra_teleport_keybinds();
+        config.generate_spawn_teleport_keybinds();
+
+        config
     }
 
     pub fn init() -> ConfigState {
@@ -116,8 +133,8 @@ impl ConfigState {
             set_if_ok!(self.clear_keybind, Shortcut::from_string(section.get("clear_keybind").unwrap_or("")));
             set_if_ok!(self.teleport_keybinds[0], Shortcut::from_string(section.get("teleport_1_keybind").unwrap_or("")));
             set_if_ok!(self.teleport_keybinds[1], Shortcut::from_string(section.get("teleport_2_keybind").unwrap_or("")));
-            set_if_ok!(self.spawn_teleport_keybinds[0], Shortcut::from_string(section.get("spawn_teleport_1_keybind").unwrap_or("")));
-            set_if_ok!(self.spawn_teleport_keybinds[1], Shortcut::from_string(section.get("spawn_teleport_2_keybind").unwrap_or("")));
+            // set_if_ok!(self.spawn_teleport_keybinds[0], Shortcut::from_string(section.get("spawn_teleport_1_keybind").unwrap_or("")));
+            // set_if_ok!(self.spawn_teleport_keybinds[1], Shortcut::from_string(section.get("spawn_teleport_2_keybind").unwrap_or("")));
             set_if_ok!(self.spawn_checkpoint_keybind, Shortcut::from_string(section.get("spawn_checkpoint_keybind").unwrap_or("")));
 
             set_if_ok!(self.trigger_sizes[0], serde_json::from_str(section.get("start_trigger_size").unwrap_or("")));
@@ -144,6 +161,9 @@ impl ConfigState {
         }
         else { error!("'Extra' section not found in config file.") }
 
+        self.generate_extra_teleport_keybinds();
+        self.generate_spawn_teleport_keybinds();
+
         info!("Config loaded");
         Ok(())
     }
@@ -163,8 +183,8 @@ impl ConfigState {
 
             .set("teleport_1_keybind", self.teleport_keybinds[0].to_string())
             .set("teleport_2_keybind", self.teleport_keybinds[1].to_string())
-            .set("spawn_teleport_1_keybind", self.spawn_teleport_keybinds[0].to_string())
-            .set("spawn_teleport_2_keybind", self.spawn_teleport_keybinds[1].to_string())
+            // .set("spawn_teleport_1_keybind", self.spawn_teleport_keybinds[0].to_string())
+            // .set("spawn_teleport_2_keybind", self.spawn_teleport_keybinds[1].to_string())
             .set("spawn_checkpoint_keybind", self.spawn_checkpoint_keybind.to_string())
 
             .set("start_trigger_size", format!("{:?}", self.trigger_sizes[0]))
@@ -189,6 +209,20 @@ impl ConfigState {
 
         info!("Config saved");
         Ok(())
+    }
+
+    pub fn generate_extra_teleport_keybinds(&mut self) {
+        let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
+        for i in 0..10 {
+            self.extra_teleport_keybinds[i] = Shortcut::new(Some(KeyboardShortcut { modifiers: self.extra_teleport_modifiers, logical_key: keys[i] }), None);
+        }
+    }
+
+    pub fn generate_spawn_teleport_keybinds(&mut self) {
+        let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
+        for i in 0..10 {
+            self.spawn_teleport_keybinds[i] = Shortcut::new(Some(KeyboardShortcut { modifiers: self.spawn_teleport_modifiers, logical_key: keys[i] }), None);
+        }
     }
 }
 

@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::fmt::Debug;
 use egui::epaint::Hsva;
-use egui::Color32;
+use egui::{Color32, Modifiers};
 use uuid::Uuid;
 use egui_keybind::Keybind;
 
@@ -17,6 +18,12 @@ pub struct Teleport {
     pub location: [f32; 3],
     pub rotation: [f32; 3],
     pub camera_rotation: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy)]
+pub enum TeleportIndex {
+    Main { i: usize },
+    Extra { i: usize },
 }
 
 #[derive(Clone)]
@@ -37,6 +44,9 @@ pub enum UIEvent {
         index: usize,
         position: [f32; 3],
         rotation: [f32; 3],
+    },
+    DeleteTrigger {
+        id: Uuid,
     },
     StartRecording,
     StopRecording,
@@ -76,10 +86,10 @@ pub enum UIEvent {
         modifier: u8,
     },
     Teleport {
-        index: usize,
+        index: TeleportIndex,
     },
     SpawnTeleport {
-        index: usize,
+        index: TeleportIndex,
     },
     RenderUpdate {
         update: RenderUpdates,
@@ -130,7 +140,8 @@ pub struct UIState {
     delete_mode: bool,
     renaming_collection: Option<Uuid>,
     renaming_name: String,
-    pub teleports: [ Option<Teleport>; 2 ],
+    pub main_teleports: [ Option<Teleport>; 2 ],
+    pub extra_teleports: [ Option<Teleport>; 10 ],
     pub hide_checkpoints: bool,
 
     pub custom_shapes: Vec<(Shape, bool)>,
@@ -146,7 +157,8 @@ impl UIState {
             delete_mode: false,
             renaming_collection: None,
             renaming_name: "".to_string(),
-            teleports: [None, None],
+            main_teleports: [None; 2],
+            extra_teleports: [None; 10],
             hide_checkpoints: false,
             custom_shapes: Vec::new(),
         };
@@ -164,6 +176,8 @@ pub fn check_input(input: &egui::RawInput) {
     let reset_keybind = config.reset_keybind;
     let clear_keybind = config.clear_keybind;
     let teleport_keybinds = config.teleport_keybinds;
+
+    let extra_teleport_keybinds = config.extra_teleport_keybinds;
     let spawn_teleport_keybinds = config.spawn_teleport_keybinds;
 
     drop(config);
@@ -180,8 +194,8 @@ pub fn check_input(input: &egui::RawInput) {
         modifier = 2;
     }
 
-    for e in &input.events {
-        if start_keybind.compare_to_event(e) {
+    for input_event in &input.events {
+        if start_keybind.compare_to_event(input_event) {
             if direct_mode {
                 new_events.push_back(UIEvent::StartRecording);
             } else {
@@ -193,7 +207,7 @@ pub fn check_input(input: &egui::RawInput) {
             }
         }
 
-        if stop_keybind.compare_to_event(e) {
+        if stop_keybind.compare_to_event(input_event) {
             if direct_mode {
                 new_events.push_back(UIEvent::StopRecording);
             } else {
@@ -205,29 +219,41 @@ pub fn check_input(input: &egui::RawInput) {
             }
         }
 
-        if reset_keybind.compare_to_event(e) {
+        if reset_keybind.compare_to_event(input_event) {
             new_events.push_back(UIEvent::ResetRecording);
         }
 
-        if clear_keybind.compare_to_event(e) {
+        if clear_keybind.compare_to_event(input_event) {
             new_events.push_back(UIEvent::ClearTriggers);
         }
 
-        if teleport_keybinds[0].compare_to_event(e) {
-            new_events.push_back(UIEvent::Teleport { index: 0 });
+        if teleport_keybinds[0].compare_to_event(input_event) {
+            new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Main { i: 0 } });
         }
 
-        if teleport_keybinds[1].compare_to_event(e) {
-            new_events.push_back(UIEvent::Teleport { index: 1 });
+        if teleport_keybinds[1].compare_to_event(input_event) {
+            new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Main { i: 1 } });
         }
 
-        if spawn_teleport_keybinds[0].compare_to_event(e) {
-            new_events.push_back(UIEvent::SpawnTeleport { index: 0 });
+        for i in 0..10 {
+            if extra_teleport_keybinds[i].compare_to_event(input_event) {
+                new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Extra { i } });
+            }
         }
 
-        if spawn_teleport_keybinds[1].compare_to_event(e) {
-            new_events.push_back(UIEvent::SpawnTeleport { index: 1 });
+        for i in 0..10 {
+            if spawn_teleport_keybinds[i].compare_to_event(input_event) {
+                new_events.push_back(UIEvent::SpawnTeleport { index: TeleportIndex::Extra { i } });
+            }
         }
+
+        // if spawn_teleport_keybinds[0].compare_to_event(e) {
+        //     new_events.push_back(UIEvent::SpawnTeleport { index: 0 });
+        // }
+
+        // if spawn_teleport_keybinds[1].compare_to_event(e) {
+        //     new_events.push_back(UIEvent::SpawnTeleport { index: 1 });
+        // }
 
         // if config.spawn_checkpoint_keybind.compare_to_event(e) {
         //     egui.new_events.push_back(UIEvent::SpawnTrigger {
@@ -470,22 +496,19 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     .num_columns(2)
                     .spacing([40.0, 4.0])
                     .striped(false)
-                    // .with_row_color(|i, style| {
-                    //     // this is not pretty but I'm just glad it works for now
-                    //     // nah actually fuck this rn
-                    //     unsafe {
-                    //         let p_log = &GLOBAL_STATE.as_mut().unwrap().state.pathlog;
-                    //         if let Some(c_id) = p_log.active_collection {
-                    //             let coll = &p_log.path_collections[p_log.path_collections.iter().position(|c| c.id() == c_id).unwrap()];
-                    //             if i < coll.paths().len() && coll.paths()[i].id() == p_log.latest_path {
-                    //                 Some(egui::Color32::from_gray(42))
-                    //                 // Some(style.visuals.faint_bg_color)
-                    //             }
-                    //             else { None }
-                    //         }
-                    //         else { None }
-                    //     }
-                    // })
+                    .with_row_color(|i, _style| {
+                        // this is not pretty but I'm just glad it works for now
+                        let p_log = PATHLOG.lock().unwrap();
+
+                        if let Some(c_id) = p_log.active_collection {
+                            if let Some(coll) = &p_log.get_collection(c_id) {
+                                if i < coll.paths().len() && coll.paths()[i] == p_log.latest_path {
+                                    Some(egui::Color32::from_gray(42))
+                                    // Some(style.visuals.faint_bg_color)
+                                } else { None }
+                            } else { None }
+                        } else { None }
+                    })
                     .show(ui, |ui| {
                         if ui.interact_bg(egui::Sense::click()).clicked() {
                             // state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
@@ -747,10 +770,11 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    let mut delete_list: Vec<Uuid> = Vec::new();
+    // let mut delete_list: Vec<Uuid> = Vec::new();
+    let mut new_events: Vec<UIEvent> = Vec::new();
 
     for t in 0..(checkpoint_triggers_len + 2) {
-        draw_trigger(ui, t, &mut delete_list);
+        draw_trigger(ui, t, &mut new_events);
     }
 
     egui::Grid::new("util")
@@ -804,33 +828,45 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
             ui.end_row();
         });
 
-    let mut pathlog = PATHLOG.lock().unwrap();
+    // let mut pathlog = PATHLOG.lock().unwrap();
 
-    for id in delete_list {
-        let pos = pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
-        if let Some(i) = pos { pathlog.checkpoint_triggers.remove(i); }
+    // for id in delete_list {
+    //     let pos = pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
+    //     if let Some(i) = pos { pathlog.checkpoint_triggers.remove(i); }
 
-        for t in 0..2 {
-            if let Some(trigger) = pathlog.main_triggers[t] {
-                if trigger.id() == id { pathlog.main_triggers[t] = None }
-            }
-        }
+    //     for t in 0..2 {
+    //         if let Some(trigger) = pathlog.main_triggers[t] {
+    //             if trigger.id() == id { pathlog.main_triggers[t] = None }
+    //         }
+    //     }
+    // }
+
+    // drop(pathlog);
+
+    let mut events = EVENTS.lock().unwrap();
+
+    for event in new_events {
+        events.push_back(event);
     }
 
-    drop(pathlog);
+    drop(events);
 
     let mut ui_state = UISTATE.lock().unwrap();
 
     ui_state.delete_mode = delete_mode;
 }
 
-fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
+// fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
+fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<UIEvent>) {
     let pathlog = PATHLOG.lock().unwrap();
+
+    let mut label = "Checkpoint";
 
     let mut trigger = match trigger_index {
         0 | 1 => {
             let t = pathlog.main_triggers[trigger_index];
             if t.is_none() { return; }
+            if trigger_index == 0 { label = "Start Trigger"} else { label = "End Trigger" }
             t.unwrap()
         },
         _ => pathlog.checkpoint_triggers[trigger_index - 2],
@@ -858,13 +894,14 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, delete_list: &mut Vec<U
             //     ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
             // });
 
-            ui.label("Checkpoint");
+            ui.label(label);
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             if delete_mode {
                 if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    delete_list.push(trigger.id());
+                    // delete_list.push(trigger.id());
+                    new_events.push(UIEvent::DeleteTrigger { id: trigger.id() });
                 }
             }
             // ui.color_edit_button_hsva(&mut shape.color);
@@ -949,7 +986,9 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     let mut reset_keybind = config.reset_keybind;
     let mut clear_keybind = config.clear_keybind;
     let mut teleport_keybinds = config.teleport_keybinds;
-    let mut spawn_teleport_keybinds = config.spawn_teleport_keybinds;
+    // let mut spawn_teleport_keybinds = config.spawn_teleport_keybinds;
+    let mut extra_teleport_modifiers = config.extra_teleport_modifiers;
+    let mut spawn_teleport_modifiers = config.spawn_teleport_modifiers;
 
     let mut timer_size = config.timer_size;
     // let mut timer_position = config.timer_position;
@@ -1003,7 +1042,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
             ui.label("UI Scale");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.3..=3.0));
+                ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.5..=8.0));
             });
             ui.end_row();
 
@@ -1073,29 +1112,108 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             });
             ui.end_row();
 
-            ui.label("Teleport to Location 1");
+            ui.label("Teleport to Start Trigger");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut teleport_keybinds[0], "teleport_1_keybind"));
             });
             ui.end_row();
 
-            ui.label("Teleport to Location 2");
+            ui.label("Teleport to End Trigger");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(Keybind::new(&mut teleport_keybinds[1], "teleport_2_keybind"));
             });
             ui.end_row();
 
-            ui.label("Set Teleport Location 1");
+            ui.label("Teleport to Location 0-9");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
+                // ui.checkbox(&mut extra_teleport_modifiers.ctrl, "Ctrl + <Number>");
+                // ui.checkbox(&mut extra_teleport_modifiers.shift, "Shift +");
+                // ui.checkbox(&mut extra_teleport_modifiers.alt, "Alt +");
+
+                #[derive(Debug, PartialEq)]
+                enum Mod {
+                    Alt,
+                    Shift,
+                    Ctrl,
+                }
+
+                let mut tmp_mod = if extra_teleport_modifiers.alt { Mod::Alt }
+                else if extra_teleport_modifiers.shift { Mod::Shift }
+                else { Mod::Ctrl };
+
+                egui::ComboBox::from_id_source("ModifierBox")
+                    .selected_text(format!("{tmp_mod:?} + <Num>"))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut tmp_mod, Mod::Alt, "Alt");
+                        ui.selectable_value(&mut tmp_mod, Mod::Shift, "Shift");
+                        ui.selectable_value(&mut tmp_mod, Mod::Ctrl, "More options soon...");
+                        // ui.selectable_value(&mut tmp_mod, Mod::Ctrl, "Ctrl");
+                    });
+
+                match tmp_mod {
+                    Mod::Alt => { extra_teleport_modifiers = Modifiers::ALT },
+                    Mod::Shift => { extra_teleport_modifiers = Modifiers::SHIFT },
+                    _ => {},
+                    // Mod::Ctrl => { extra_teleport_modifiers = Modifiers::CTRL },
+                }
             });
             ui.end_row();
 
-            ui.label("Set Teleport Location 2");
+            ui.label("Set Teleport Location 0-9");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
+                #[derive(PartialEq)]
+                enum Mods {
+                    AltShift,
+                    AltCtrl,
+                    ShiftCtrl,
+                }
+
+                impl Debug for Mods {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        match self {
+                            Mods::AltShift => { write!(f, "Alt + Shift") },
+                            Mods::AltCtrl => { write!(f, "Alt + Ctrl") },
+                            Mods::ShiftCtrl => { write!(f, "Shift + Ctrl") },
+                        }
+                    }
+                }
+
+                let mut tmp_mods = match spawn_teleport_modifiers {
+                    Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false } => { Mods::AltShift },
+                    Modifiers { alt: true, ctrl: true, shift: false, mac_cmd: false, command: false } => { Mods::AltCtrl },
+                    Modifiers { alt: false, ctrl: true, shift: true, mac_cmd: false, command: false } => { Mods::ShiftCtrl },
+                    _ => { panic!() },
+                };
+
+                egui::ComboBox::from_id_source("ModifiersBox")
+                    .selected_text(format!("{tmp_mods:?} + <Num>"))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut tmp_mods, Mods::AltShift, "Alt + Shift");
+                        ui.selectable_value(&mut tmp_mods, Mods::AltCtrl, "More options soon...");
+                        // ui.selectable_value(&mut tmp_mods, Mods::AltCtrl, "Alt + Ctrl");
+                        // ui.selectable_value(&mut tmp_mods, Mods::ShiftCtrl, "Shift + Ctrl");
+                    });
+
+                match tmp_mods {
+                    Mods::AltShift => { spawn_teleport_modifiers = Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false } },
+                    _ => {},
+                    // Mods::AltCtrl => { spawn_teleport_modifiers = Modifiers { alt: true, ctrl: true, shift: false, mac_cmd: false, command: false } },
+                    // Mods::ShiftCtrl => { spawn_teleport_modifiers = Modifiers { alt: false, ctrl: true, shift: true, mac_cmd: false, command: false } },
+                }
             });
             ui.end_row();
+
+            // ui.label("Set Teleport Location 1");
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            //     ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
+            // });
+            // ui.end_row();
+
+            // ui.label("Set Teleport Location 2");
+            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            //     ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
+            // });
+            // ui.end_row();
 
             // ui.label("Spawn Checkpoint");
             // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1217,7 +1335,17 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     config.reset_keybind = reset_keybind;
     config.clear_keybind = clear_keybind;
     config.teleport_keybinds = teleport_keybinds;
-    config.spawn_teleport_keybinds = spawn_teleport_keybinds;
+    // config.spawn_teleport_keybinds = spawn_teleport_keybinds;
+
+    if config.extra_teleport_modifiers != extra_teleport_modifiers {
+        config.extra_teleport_modifiers = extra_teleport_modifiers;
+        config.generate_extra_teleport_keybinds();
+    }
+
+    if config.spawn_teleport_modifiers != spawn_teleport_modifiers {
+        config.spawn_teleport_modifiers = spawn_teleport_modifiers;
+        config.generate_spawn_teleport_keybinds();
+    }
 
     config.timer_size = timer_size;
     // config.timer_position = timer_position;
@@ -1475,7 +1603,7 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-                
+
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     // state.ui_state.events.push_back(UIEvent::CreateShape);
                     let mut new_shape = Shape::new();

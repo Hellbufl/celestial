@@ -206,11 +206,33 @@ fn process_events() {
                 let trigger_size = CONFIG_STATE.lock().unwrap().trigger_sizes[index];
                 if PATHLOG.lock().unwrap().is_empty() {
                     PATHLOG.lock().unwrap().create_trigger(index, position, rotation, trigger_size);
-                    EVENTS.lock().unwrap().push_back(UIEvent::SpawnTeleport { index });
+                    EVENTS.lock().unwrap().push_back(UIEvent::SpawnTeleport { index: ui::TeleportIndex::Main { i: index } });
                 }
                 else {
                     // TODO: popup warning
                 }
+            }
+            UIEvent::DeleteTrigger { id } => {
+                let pos = PATHLOG.lock().unwrap().checkpoint_triggers.iter().position(|t| t.id() == id);
+                if let Some(i) = pos {
+                    PATHLOG.lock().unwrap().checkpoint_triggers.remove(i);
+                    continue;
+                }
+
+                let mut main_triggers = PATHLOG.lock().unwrap().main_triggers;
+                let mut main_teleports = UISTATE.lock().unwrap().main_teleports;
+
+                for t in 0..2 {
+                    if let Some(trigger) = main_triggers[t] {
+                        if trigger.id() == id {
+                            main_triggers[t] = None;
+                            main_teleports[t] = None;
+                        }
+                    }
+                }
+
+                PATHLOG.lock().unwrap().main_triggers = main_triggers;
+                UISTATE.lock().unwrap().main_teleports = main_teleports;
             }
             UIEvent::StartRecording => {
                 PATHLOG.lock().unwrap().start();
@@ -232,6 +254,7 @@ fn process_events() {
             }
             UIEvent::ClearTriggers => {
                 PATHLOG.lock().unwrap().clear_triggers();
+                UISTATE.lock().unwrap().main_teleports = [None; 2];
             }
             UIEvent::CreateCollection => {
                 PATHLOG.lock().unwrap().create_collection();
@@ -374,7 +397,7 @@ fn process_events() {
                             }
 
                             if let Some(start_trigger) = PATHLOG.lock().unwrap().main_triggers[0] {
-                                UISTATE.lock().unwrap().teleports[0] = Some(Teleport {
+                                UISTATE.lock().unwrap().main_teleports[0] = Some(Teleport {
                                     location: start_trigger.position,
                                     rotation: start_trigger.rotation(),
                                     camera_rotation: None,
@@ -382,7 +405,7 @@ fn process_events() {
                             }
 
                             if let Some(end_trigger) = PATHLOG.lock().unwrap().main_triggers[1] {
-                                UISTATE.lock().unwrap().teleports[1] = Some(Teleport {
+                                UISTATE.lock().unwrap().main_teleports[1] = Some(Teleport {
                                     location: end_trigger.position,
                                     rotation: end_trigger.rotation(),
                                     camera_rotation: None,
@@ -441,7 +464,16 @@ fn process_events() {
                 loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
             }
             UIEvent::Teleport { index } => {
-                if let Some(teleport) = &UISTATE.lock().unwrap().teleports[index] {
+                let t = match index {
+                    TeleportIndex::Main { i } => {
+                        UISTATE.lock().unwrap().main_teleports[i]
+                    },
+                    TeleportIndex::Extra { i } => {
+                        UISTATE.lock().unwrap().extra_teleports[i]
+                    },
+                };
+
+                if let Some(teleport) = t {
                     gamedata::teleport_player(teleport.location, teleport.rotation);
                     if let Some(cam_rotation) = teleport.camera_rotation {
                         gamedata::set_camera_rotation(cam_rotation);
@@ -450,12 +482,20 @@ fn process_events() {
                 }
             }
             UIEvent::SpawnTeleport { index } => {
-                if index > 1 { continue; }
-                UISTATE.lock().unwrap().teleports[index] = Some(Teleport {
+                let teleport = Some(Teleport {
                     location: gamedata::get_player_position(),
                     rotation: gamedata::get_player_rotation(),
                     camera_rotation: Some(gamedata::get_camera_rotation()),
-                })
+                });
+
+                match index {
+                    TeleportIndex::Main { i } => {
+                        UISTATE.lock().unwrap().main_teleports[i] = teleport;
+                    },
+                    TeleportIndex::Extra { i } => {
+                        UISTATE.lock().unwrap().extra_teleports[i] = teleport;
+                    },
+                }
             }
             UIEvent::RenderUpdate { update } => {
                 RENDER_UPDATES.lock().unwrap().or(update);
@@ -577,10 +617,14 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
             dx_renderer
                 .paint(&this, &mut nothing, input.clone(), |ctx, _| {
-                    // ctx.set_zoom_factor(state.config.zoom);
+                    // this changes the resolution its rendering but not the scale on screen for some fucking reason
+                    // ctx.set_pixels_per_point(CONFIG_STATE.lock().unwrap().zoom);
 
                     // my best attempt at getting a fucking window position but ofc it's private
                     // let state = ctx.memory(|mem| mem.areas().get(id).copied());
+
+                    IS_POINTER_OVER_EGUI = ctx.is_pointer_over_area();
+                    EGUI_WANTS_KEYBOARD_INPUT = ctx.wants_keyboard_input();
 
                     egui::Window::new("Celestial")
                         .default_size(egui::vec2(300f32, 300f32))
@@ -589,8 +633,6 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .min_size([300.0, 300.0])
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
-                            IS_POINTER_OVER_EGUI = ctx.is_pointer_over_area();
-                            EGUI_WANTS_KEYBOARD_INPUT = ctx.wants_keyboard_input();
                             ui::draw_ui(ui);
                         });
 
@@ -734,35 +776,59 @@ fn render_triggers(pintar: &mut Pintar) {
 fn render_teleports(pintar: &mut Pintar) {
     let config = CONFIG_STATE.lock().unwrap();
 
-    let trigger_colors = config.trigger_colors;
+    let accent_colors = config.accent_colors;
 
     drop(config);
 
     let ui_state = UISTATE.lock().unwrap();
 
-    let teleports = ui_state.teleports;
+    let teleports = ui_state.extra_teleports;
 
     drop(ui_state);
 
-    if let Some(teleport) = &teleports[0] {
-        let pos = teleport.location;
-        let mut color = trigger_colors[0];
-        // color[3] = 0.5;
-        // pos[1] += 1.0;
-        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-        color[3] *= 0.25;
-        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
+    let lerp = |a: u8, b: u8, t: f32| -> f32 { (a as f32 * (1.0-t) + b as f32 * t) / 255. };
+
+    for i in 0..10 {
+        if let Some(teleport) = &teleports[i] {
+            let pos = teleport.location;
+
+            let p = i as f32 / 10.;
+            let mut color = [
+                lerp(accent_colors[0][0], accent_colors[1][0], p),
+                lerp(accent_colors[0][1], accent_colors[1][1], p),
+                lerp(accent_colors[0][2], accent_colors[1][2], p),
+                lerp(accent_colors[0][3], accent_colors[1][3], p),
+            ];
+
+            // info!("DEBUG: color: {color:?}");
+            // let mut color = trigger_colors[0];
+            // color[3] = 0.5;
+            // pos[1] += 1.0;
+            pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+            color[3] *= 0.25;
+            pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
+        }
     }
 
-    if let Some(teleport) = &teleports[1] {
-        let pos = teleport.location;
-        let mut color = trigger_colors[1];
-        // color[3] = 0.5;
-        // pos[1] += 1.0;
-        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-        color[3] *= 0.25;
-        pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-    }
+    // if let Some(teleport) = &teleports[0] {
+    //     let pos = teleport.location;
+    //     let mut color = trigger_colors[0];
+    //     // color[3] = 0.5;
+    //     // pos[1] += 1.0;
+    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+    //     color[3] *= 0.25;
+    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
+    // }
+
+    // if let Some(teleport) = &teleports[1] {
+    //     let pos = teleport.location;
+    //     let mut color = trigger_colors[1];
+    //     // color[3] = 0.5;
+    //     // pos[1] += 1.0;
+    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
+    //     color[3] *= 0.25;
+    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
+    // }
 }
 
 // fn render_custom_shapes(pintar: &mut Pintar, egui: &UIState) {
@@ -803,7 +869,7 @@ fn render_custom_shapes(pintar: &mut Pintar) {
 
 fn draw_debug(ui: &mut egui::Ui) {
     ui.add(egui::Label::new(
-        RichText::new(format!("{:?}", gamedata::get_is_loading()))
+        RichText::new(format!("{:?}", unsafe { IS_POINTER_OVER_EGUI }))
     ).selectable(false));
 }
 

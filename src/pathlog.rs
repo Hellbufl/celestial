@@ -451,6 +451,11 @@ impl PathLog {
                 self.solo_paths.remove(&path_id);
                 self.paths.remove(path_id);
             }
+
+            if self.active_collection == Some(collection_id) {
+                self.active_collection = None;
+            }
+
             self.mute_collections.remove(&collection_id);
             self.solo_collections.remove(&collection_id);
             self.path_collections.remove(index);
@@ -473,6 +478,7 @@ impl PathLog {
         self.paths = data.get_paths();
         self.path_collections = data.get_collections();
         self.current_file = None;
+        self.active_collection = None;
 
         self.mute_collections.clear();
         self.solo_collections.clear();
