@@ -43,8 +43,8 @@ If you activate the filter mode on a collection, that collection will only accep
 You can also set the filter on a specific time by right clicking on it. Now only paths faster than this time will be accepted and the filter will stay fixed.
 
 # Troubleshooting
-Windows Defender might prevent the game from running whith the mod installed. I currently don't know what to do about this so you'll have to make an exception for the NieR:Autonata folder for the time being.
-Google Chrome will not even download the dll.
+Windows Defender might prevent the game from running whith the mod installed. I currently don't know what to do about this so you'll have to make an exception for the NieR:Automata folder for the time being.
+Google Chrome might not even download the dll.
 
 <!--
 ### Separate Paths
