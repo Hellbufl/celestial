@@ -78,12 +78,18 @@ pub static UISTATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init
 pub static EVENTS: Lazy<Mutex<VecDeque<UIEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 pub static RENDER_UPDATES: Lazy<Mutex<RenderUpdates>> = Lazy::new(|| Mutex::new(RenderUpdates::new()));
 
+// struct InputState {
+//     input_manager: Option<InputManager>,
+//     old_wndproc: Option<WNDPROC>,
+//     cursor_on_ui: bool,
+//     ui_wants_keyboard: bool,
+// }
 
 static mut PINTAR : Option<Pintar> = None;
 static mut EGUI_RENDERER : Option<DirectX11Renderer> = None;
+
 static mut INPUT_MANAGER : Option<InputManager> = None;
 static mut OLD_WNDPROC : Option<WNDPROC> = None;
-
 static mut IS_POINTER_OVER_EGUI : bool = false;
 static mut EGUI_WANTS_KEYBOARD_INPUT : bool = false;
 
@@ -316,7 +322,12 @@ fn process_events() {
                 if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
                     thread::spawn(move || {
-                            tx.send(FileDialog::new().show_save_single_file()).unwrap();
+                            tx.send(
+                                FileDialog::new()
+                                .add_filter("Celestial Comparison", &[FILE_EXTENTION])
+                                .set_filename("Untitled")
+                                .show_save_single_file()
+                            ).unwrap();
                     });
                     ui_state.file_path_rx = Some(RX::Save { rx });
                     loop_events.push_back(UIEvent::SaveComparison);
@@ -339,7 +350,12 @@ fn process_events() {
                 if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
                     thread::spawn(move || {
-                        tx.send(FileDialog::new().show_open_single_file()).unwrap();
+                        tx.send(
+                            FileDialog::new()
+                            .add_filter("Celestial Comparison", &[FILE_EXTENTION])
+                            .add_filter("Any", &["*"])
+                            .show_open_single_file()
+                        ).unwrap();
                     });
                     ui_state.file_path_rx = Some(RX::Load { rx });
                     loop_events.push_back(UIEvent::LoadComparison);
@@ -467,7 +483,7 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
     }
 
     if PINTAR.is_none() {
-        let mut pintar = Pintar::new(&this, 0);
+        let mut pintar = Pintar::init(&this, 0);
         pintar.add_line_vertex_group(RECORDING_GROUP.to_string());
         pintar.add_line_vertex_group(PATHS_GROUP.to_string());
         pintar.add_default_vertex_group(TRIGGERS_GROUP.to_string());

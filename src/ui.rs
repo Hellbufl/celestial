@@ -517,9 +517,25 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+
+                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                let mut delete_button_text = egui::RichText::new("\u{2796}");
+
+                if delete_mode {
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                    delete_button_text = delete_button_text.strong();
+                }
+
+                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
                     delete_mode ^= true;
                 }
+
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     new_events.push_back(UIEvent::CreateCollection);
                 }
@@ -723,6 +739,12 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     drop(ui_state);
 
+    let config = CONFIG_STATE.lock().unwrap();
+
+    let accent_colors = config.accent_colors;
+
+    drop(config);
+
     ui.separator();
 
     let mut delete_list: Vec<Uuid> = Vec::new();
@@ -757,9 +779,24 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                let mut delete_button_text = egui::RichText::new("\u{2796}");
+
+                if delete_mode {
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                    delete_button_text = delete_button_text.strong();
+                }
+
+                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
                     delete_mode ^= true;
                 }
+
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
                 // if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                 //     state.pathlog.checkpoint_triggers.push(BoxCollider::new(pos, rotation, size));
                 // }
@@ -772,6 +809,12 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
     for id in delete_list {
         let pos = pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
         if let Some(i) = pos { pathlog.checkpoint_triggers.remove(i); }
+
+        for t in 0..2 {
+            if let Some(trigger) = pathlog.main_triggers[t] {
+                if trigger.id() == id { pathlog.main_triggers[t] = None }
+            }
+        }
     }
 
     drop(pathlog);
@@ -1415,12 +1458,30 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.add(egui::Button::new("\u{2796}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                let mut delete_button_text = egui::RichText::new("\u{2796}");
+
+                if delete_mode {
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                    delete_button_text = delete_button_text.strong();
+                }
+
+                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
                     delete_mode ^= true;
                 }
+
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     // state.ui_state.events.push_back(UIEvent::CreateShape);
-                    custom_shapes.push((Shape::new(), false));
+                    let mut new_shape = Shape::new();
+                    new_shape.position = gamedata::get_player_position();
+                    new_shape.rotation = gamedata::get_player_rotation();
+                    custom_shapes.push((new_shape, false));
                 }
             });
             ui.end_row();

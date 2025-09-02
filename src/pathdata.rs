@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 use std::fs;
 use std::vec::Vec;
-// use tracing::{error, info};
 use glam::{Vec3, Mat3};
 use serde_binary::binary_stream;
 use serde::{Serialize, Deserialize};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::error::Error;
 
 const CURRENT_FILE_VERSION : &str = "0.6";
+const LEGACY_FILE_VERSION : &str = "0.5";
+pub const FILE_EXTENTION : &str = "ccmp";
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
@@ -281,6 +283,7 @@ impl CompFile {
         head += 4 + first_field_length;
 
         if first_field_name != "version" {
+            info!("File Version: 0.4");
             let old_comp_file = serde_binary::from_vec::<CompFile04>(file_content, binary_stream::Endian::Little)?;
             return Ok(CompFile::from(CompFile05::from(old_comp_file)));
         }
@@ -288,10 +291,12 @@ impl CompFile {
         let file_version_len = serde_binary::from_slice::<u32>(&file_content[head..(head + 4)], binary_stream::Endian::Little)? as usize;
         let file_version = serde_binary::from_slice::<String>(&file_content[head..(head + 4 + file_version_len)], binary_stream::Endian::Little)?;
 
-        if file_version == "0.5.1" {
+        info!("File Version: {file_version}");
+
+        if file_version == CURRENT_FILE_VERSION {
             Ok(serde_binary::from_vec::<CompFile>(file_content.clone(), binary_stream::Endian::Little)?)
         }
-        else if file_version == "0.5" {
+        else if file_version == LEGACY_FILE_VERSION {
             Ok(CompFile::from(serde_binary::from_vec::<CompFile05>(file_content.clone(), binary_stream::Endian::Little)?))
         }
         else {
@@ -352,7 +357,7 @@ impl From<CompFile04> for CompFile05 {
         for old_collection in old_comp_file.collections {
             collections.push(PathCollection05::from(old_collection));
         }
-        CompFile05 { version: "0.5".to_string(), trigger_data: old_comp_file.trigger_data, collections }
+        CompFile05 { version: LEGACY_FILE_VERSION.to_string(), trigger_data: old_comp_file.trigger_data, collections }
     }
 }
 

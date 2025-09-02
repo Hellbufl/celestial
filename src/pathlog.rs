@@ -192,7 +192,6 @@ impl PathLog {
 
             for i in 0..collection.paths().len() {
                 let path_id = collection.paths()[i];
-
                 let mut path_visible = self.solo_paths.values().all(|s| !s);
                 if *self.solo_paths.get(&path_id).unwrap() { path_visible = true; }
                 if *self.mute_paths.get(&path_id).unwrap() { path_visible = false; }
@@ -205,59 +204,54 @@ impl PathLog {
                     continue;
                 }
 
-                let position =  all_compared.iter().position(|id| *id == path_id).unwrap();
+                let position = all_compared.iter().position(|id| *id == path_id).unwrap();
                 self.compared_paths.push((path_id, position));
             }
         }
     }
 
     fn add_path_to_collection(&mut self, path_id: Uuid, collection_id: Uuid) {
-        // let collection = match self.path_collections.iter_mut().find(|c| c.id() == collection_id) {
-        //     Some(coll) => coll,
-        //     None => {
-        //         if collection_id == self.compared_paths.id() { &mut self.compared_paths }
-        //         else { return; }
-        //     },
-        // };
-
         let collection = self.path_collections.iter_mut().find(|c| c.id() == collection_id).unwrap();
+        let new_path = self.paths.get(&path_id).unwrap();
+        let mut position = collection.paths().len();
+
+        if !collection.paths().is_empty() {
+            match self.filters.get(&collection_id) {
+                Some(HighPassFilter::Gold) => {
+                    // if self.paths.get(&collection.paths()[0]).unwrap().time() > new_path.time() {
+                    //     collection.insert(0, path_id);
+                    // }
+                    if self.paths.get(&collection.paths()[0]).unwrap().time() < new_path.time() {
+                        return;
+                    }
+                    position = 0;
+                }
+                Some(HighPassFilter::Path { id }) => {
+                    for i in 0..collection.paths().len() {
+                        if self.paths.get(&collection.paths()[i]).unwrap().time() > new_path.time() {
+                            // collection.insert(i, path_id);
+                            position = i;
+                            break;
+                        }
+                        if self.paths.get(&collection.paths()[i]).unwrap().id() == *id { return; }
+                    }
+                }
+                None => {
+                    for i in 0..collection.paths().len() {
+                        if self.paths.get(&collection.paths()[i]).unwrap().time() < new_path.time() { continue; }
+                        // collection.insert(i, path_id);
+                        position = i;
+                        break;
+                    }
+                    // collection.push(path_id);
+                }
+            }
+        }
 
         self.mute_paths.entry(path_id).or_insert(false);
         self.solo_paths.entry(path_id).or_insert(false);
 
-        let new_path = self.paths.get(&path_id).unwrap();
-
-        match self.filters.get(&collection_id) {
-            Some(HighPassFilter::Gold) => {
-                if self.paths.len() == 0 || self.paths.get(&collection.paths()[0]).unwrap().time() > new_path.time() {
-                    collection.insert(0, path_id);
-                }
-            }
-            Some(HighPassFilter::Path { id }) => {
-                if collection.paths().is_empty() {
-                    collection.push(path_id);
-                    return;
-                }
-
-                for i in 0..collection.paths().len() {
-                    if self.paths.get(&collection.paths()[i]).unwrap().time() > new_path.time() {
-                        collection.insert(i, path_id);
-                        return;
-                    }
-                    if self.paths.get(&collection.paths()[i]).unwrap().id() == *id { return; }
-                }
-            }
-            None => {
-                for i in 0..collection.paths().len() {
-                    if self.paths.get(&collection.paths()[i]).unwrap().time() < new_path.time() { continue; }
-                    collection.insert(i, path_id);
-                    return;
-                }
-                collection.push(path_id);
-            }
-        }
-
-        // info!("done.");
+        collection.insert(position, path_id);
     }
 
     pub fn compared_paths(&self) -> &Vec<(Uuid, usize)> {
@@ -415,6 +409,12 @@ impl PathLog {
 
     pub fn delete_path(&mut self, path_id: Uuid) {
         for collection in &mut self.path_collections {
+            if let Some(HighPassFilter::Path{ id: filter_id }) = self.filters.get(&collection.id()) {
+                if *filter_id == path_id {
+                    self.filters.remove(&collection.id());
+                }
+            }
+
             collection.remove(path_id);
         }
 

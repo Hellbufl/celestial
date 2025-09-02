@@ -77,7 +77,7 @@ unsafe fn get_game_version() -> GameVersion {
     let file = fs::read(filepath).unwrap();
     let result = Sha256::digest(file).to_vec();
 
-    info!("hash: {:x?}", result);
+    info!("Executable hash: {:x?}", result);
 
     let version = match HASHES.get(&result) {
         Some(&v) => v,
@@ -87,7 +87,7 @@ unsafe fn get_game_version() -> GameVersion {
         }
     };
 
-    info!("version: {:?}", HASHES.get(&result).unwrap());
+    info!("Game version: {:?}", HASHES.get(&result).unwrap());
 
     version
 }
