@@ -1,14 +1,14 @@
 ### Todo
 
-- change teleports again lmao
+- teleports tab
 - 1.01 support (wip)
-- configurable input supression
 
+- configurable input supression
 - move paths between collections
 - move collections
+- migrate to newest egui version
 
 - get some cool screenshots for the github
-- limit drawn lines per collection ?
 
 - fix all the bugs :)
 

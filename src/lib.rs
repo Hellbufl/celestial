@@ -670,6 +670,13 @@ fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f
     }
 }
 
+// fn render_recording_path(pintar: &mut Pintar) {
+//     for segment in path.segments() {
+//         if segment.len() < 2 { continue; }
+//         pintar.add_line(RECORDING_GROUP.to_string(), segment, color, thickness);
+//     }
+// }
+
 fn render_all_paths(pintar: &mut Pintar) {
     if !RENDER_UPDATES.lock().unwrap().paths { return; }
 

@@ -286,6 +286,10 @@ impl PathLog {
         info!("Recording reset");
     }
 
+    // pub fn split(&mut self) {
+
+    // }
+
     pub fn pause(&mut self) {
         if !self.recording || self.paused { return; }
 
@@ -303,8 +307,6 @@ impl PathLog {
 
         self.paused = false;
         info!("Recording unpaused");
-        // let p : Option<i32> = None;
-        // let _a = p.unwrap();
     }
 
     pub fn toggle_pause(&mut self) {

@@ -1,17 +1,18 @@
 use std::collections::HashMap;
-use std::fs;
 use std::process::exit;
 use tracing::{error, info};
 use windows::core::PCSTR;
-use windows::Win32::System::LibraryLoader::{ GetModuleHandleA, GetModuleFileNameA};
-use sha2::{Sha256, Digest};
+use windows::Win32::Foundation::{CloseHandle, FALSE};
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+use windows::Win32::System::ProcessStatus::{GetModuleInformation, MODULEINFO};
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
 use lazy_static::lazy_static;
 
 #[derive(Debug, Clone, Copy)]
 pub enum GameVersion {
     V101,
     V102,
-    WinStore,
+    BAG,
     Debug,
 }
 
@@ -28,14 +29,13 @@ struct Offsets {
 }
 
 lazy_static! {
-    static ref HASHES : HashMap<Vec<u8>, GameVersion> = {
-        let mut hashes = HashMap::new();
-        // hashes.insert(vec![81, 113, 190, 208, 158, 111, 236, 123, 33, 191, 14, 164, 121, 219, 210, 225, 178, 40, 105, 92, 103, 209, 240, 180, 120, 84, 154, 155, 226, 245, 114, 106], GameVersion::V102);
-        hashes.insert(vec![0xa0, 0x1a, 0xc5, 0x13, 0x2e, 0x10, 0x92, 0x52, 0xd6, 0xd9, 0xa4, 0xcb, 0xf9, 0x74, 0x61, 0x4d, 0xec, 0xfb, 0xe3, 0x23, 0x71, 0x3c, 0x1f, 0xbf, 0x5b, 0xc2, 0x48, 0xf0, 0x12, 0x61, 0x77, 0x3f], GameVersion::V101);
-        hashes.insert(vec![0x51, 0x71, 0xbe, 0xd0, 0x9e, 0x6f, 0xec, 0x7b, 0x21, 0xbf, 0x0e, 0xa4, 0x79, 0xdb, 0xd2, 0xe1, 0xb2, 0x28, 0x69, 0x5c, 0x67, 0xd1, 0xf0, 0xb4, 0x78, 0x54, 0x9a, 0x9b, 0xe2, 0xf5, 0x72, 0x6a], GameVersion::V102);
-        hashes.insert(vec![0x3d, 0xde, 0x56, 0x6c, 0xea, 0x3e, 0x3b, 0xc1, 0x5e, 0x45, 0x92, 0x66, 0x02, 0xfb, 0x4f, 0x24, 0xd4, 0x8f, 0x77, 0xdf, 0x8a, 0x7b, 0xc5, 0x50, 0xa5, 0xb2, 0xdc, 0xae, 0xcc, 0xcf, 0x09, 0x48], GameVersion::WinStore);
-        hashes.insert(vec![0xe9, 0xef, 0x66, 0x01, 0xeb, 0x40, 0xeb, 0x0a, 0x6d, 0x3f, 0x30, 0xa6, 0x63, 0x95, 0x43, 0xec, 0x2f, 0x81, 0x71, 0xc2, 0x6a, 0x3d, 0xe8, 0xb2, 0xb1, 0x30, 0x39, 0xee, 0xbe, 0x3b, 0xc8, 0x1c], GameVersion::Debug);
-        hashes
+    static ref VERSIONS : HashMap<u32, GameVersion> = {
+        let mut versions = HashMap::new();
+        versions.insert(106266624, GameVersion::V101);
+        versions.insert(26177536, GameVersion::V102);
+        versions.insert(26476544, GameVersion::BAG);
+        // versions.insert(0, GameVersion::Debug);
+        versions
     };
 
     static ref OFFSETS : Offsets = unsafe {
@@ -66,20 +66,21 @@ lazy_static! {
 // const PLAYER_ACTOR_OFFSET : usize = 0x01020BE0;
 
 unsafe fn get_game_version() -> GameVersion {
-
-    let mut raw_filepath : [u8; 256] = [0; 256];
-
     let hmodule = GetModuleHandleA(PCSTR::null()).unwrap();
-    let length = GetModuleFileNameA(hmodule, &mut raw_filepath) as usize;
 
-    let filepath = String::from_utf8(raw_filepath[..length].to_vec()).unwrap();
+    let mut lpmodinfo: MODULEINFO = std::mem::zeroed();
 
-    let file = fs::read(filepath).unwrap();
-    let result = Sha256::digest(file).to_vec();
+    let process_id = std::process::id();
+    let hprocess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, process_id).unwrap();
 
-    info!("Executable hash: {:x?}", result);
+    let _ = GetModuleInformation(hprocess, hmodule, &mut lpmodinfo, size_of::<MODULEINFO>() as u32);
+    let _ = CloseHandle(hprocess);
 
-    let version = match HASHES.get(&result) {
+    let file_size = lpmodinfo.SizeOfImage;
+
+    info!("Module memory size: {file_size}");
+
+    let version = match VERSIONS.get(&file_size) {
         Some(&v) => v,
         None => {
             error!("Unknown game version!");
@@ -87,7 +88,7 @@ unsafe fn get_game_version() -> GameVersion {
         }
     };
 
-    info!("Game version: {:?}", HASHES.get(&result).unwrap());
+    info!("Game version: {:?}", version);
 
     version
 }
