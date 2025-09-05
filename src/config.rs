@@ -133,9 +133,10 @@ impl ConfigState {
             set_if_ok!(self.clear_keybind, Shortcut::from_string(section.get("clear_keybind").unwrap_or("")));
             set_if_ok!(self.teleport_keybinds[0], Shortcut::from_string(section.get("teleport_1_keybind").unwrap_or("")));
             set_if_ok!(self.teleport_keybinds[1], Shortcut::from_string(section.get("teleport_2_keybind").unwrap_or("")));
-            // set_if_ok!(self.spawn_teleport_keybinds[0], Shortcut::from_string(section.get("spawn_teleport_1_keybind").unwrap_or("")));
-            // set_if_ok!(self.spawn_teleport_keybinds[1], Shortcut::from_string(section.get("spawn_teleport_2_keybind").unwrap_or("")));
             set_if_ok!(self.spawn_checkpoint_keybind, Shortcut::from_string(section.get("spawn_checkpoint_keybind").unwrap_or("")));
+
+            set_if_ok!(self.extra_teleport_modifiers, Modifiers::from_string(section.get("extra_teleport_modifiers").unwrap_or("")));
+            set_if_ok!(self.spawn_teleport_modifiers, Modifiers::from_string(section.get("spawn_teleport_modifiers").unwrap_or("")));
 
             set_if_ok!(self.trigger_sizes[0], serde_json::from_str(section.get("start_trigger_size").unwrap_or("")));
             set_if_ok!(self.trigger_sizes[1], serde_json::from_str(section.get("end_trigger_size").unwrap_or("")));
@@ -183,9 +184,10 @@ impl ConfigState {
 
             .set("teleport_1_keybind", self.teleport_keybinds[0].to_string())
             .set("teleport_2_keybind", self.teleport_keybinds[1].to_string())
-            // .set("spawn_teleport_1_keybind", self.spawn_teleport_keybinds[0].to_string())
-            // .set("spawn_teleport_2_keybind", self.spawn_teleport_keybinds[1].to_string())
             .set("spawn_checkpoint_keybind", self.spawn_checkpoint_keybind.to_string())
+
+            .set("extra_teleport_modifiers", self.extra_teleport_modifiers.to_string())
+            .set("spawn_teleport_modifiers", self.spawn_teleport_modifiers.to_string())
 
             .set("start_trigger_size", format!("{:?}", self.trigger_sizes[0]))
             .set("end_trigger_size", format!("{:?}", self.trigger_sizes[1]))
@@ -248,7 +250,6 @@ impl ShortcutString for Shortcut {
         if mods.mac_cmd { stringcut += "mac_cmd+"};
         if mods.command { stringcut += "command+"};
 
-        // unsafe { stringcut + std::mem::transmute::<_, u8>(keyboard.logical_key).to_string() }
         stringcut + &(keyboard.unwrap().logical_key as u8).to_string()
     }
 
@@ -279,6 +280,44 @@ impl ShortcutString for Shortcut {
         }
 
         Ok(Shortcut::new(Some(keyboard), None))
+    }
+}
+
+trait ModifierString {
+    fn to_string(&self) -> String;
+    fn from_string(stringcut: &str) -> Result<Modifiers, std::io::Error>;
+}
+
+impl ModifierString for Modifiers {
+    fn to_string(&self) -> String {
+        let mut stringcut = "".to_string();
+
+        if self.alt { stringcut += "alt+"};
+        if self.ctrl { stringcut += "ctrl+"};
+        if self.shift { stringcut += "shift+"};
+        if self.mac_cmd { stringcut += "mac_cmd+"};
+        if self.command { stringcut += "command+"};
+
+        stringcut.pop();
+        stringcut
+    }
+
+    fn from_string(stringcut: &str) -> Result<Modifiers, std::io::Error> {
+        let mods: Vec<&str> = stringcut.split("+").collect();
+        let mut modifiers = Modifiers::NONE;
+
+        for m in mods {
+            match m {
+                "alt" => modifiers.alt = true,
+                "ctrl" => modifiers.ctrl = true,
+                "shift" => modifiers.shift = true,
+                "mac_cmd" => modifiers.mac_cmd = true,
+                "command" => modifiers.command = true,
+                _ => error!("Invalid modifier key: {m}"),
+            }
+        }
+
+        Ok(modifiers)
     }
 }
 

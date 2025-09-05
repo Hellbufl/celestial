@@ -4,8 +4,6 @@ use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex};
-use std::thread;
-use native_dialog::FileDialog;
 use windows::core::HRESULT;
 use windows::Win32::System::Console::AllocConsole;
 use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
@@ -36,23 +34,24 @@ use tracing::*;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use egui::RichText;
 use egui_directx11::DirectX11Renderer;
 use egui_win32::InputManager;
-use uuid::Uuid;
 
 mod tether;
 pub mod gamedata;
 pub mod config;
 pub mod pathlog;
 pub mod pathdata;
+pub mod rendering;
 pub mod ui;
 pub mod error;
+pub mod events;
 
-use config::*;
 use pathlog::*;
-use pathdata::*;
+use rendering::*;
 use ui::*;
+use events::*;
+use config::*;
 
 use ocular;
 use pintar::Pintar;
@@ -64,18 +63,13 @@ pub struct ScreenDimensions {
 }
 
 // static TICKRATE : u32 = 60;
-static RECORDING_GROUP : &str = "recording";
-static PATHS_GROUP : &str = "paths";
-static TRIGGERS_GROUP : &str = "triggers";
-static TELEPORTS_GROUP : &str = "teleports";
-static SHAPES_GROUP : &str = "custom_shapes";
 
 static SCREEN_DIMENSIONS: Lazy<Mutex<ScreenDimensions>> = Lazy::new(|| Mutex::new(ScreenDimensions::default()));
 
 pub static PATHLOG: Lazy<Mutex<PathLog>> = Lazy::new(|| Mutex::new(PathLog::init()));
 pub static CONFIG_STATE: Lazy<Mutex<ConfigState>> = Lazy::new(|| Mutex::new(ConfigState::init()));
 pub static UISTATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init()));
-pub static EVENTS: Lazy<Mutex<VecDeque<UIEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+pub static EVENTS: Lazy<Mutex<VecDeque<CelEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 pub static RENDER_UPDATES: Lazy<Mutex<RenderUpdates>> = Lazy::new(|| Mutex::new(RenderUpdates::new()));
 
 // struct InputState {
@@ -139,376 +133,6 @@ pub enum RX {
 //     player_speeds: Vec<f32>,
 //     average_player_speed: f32,
 // }
-
-#[derive(Clone, Copy)]
-pub struct RenderUpdates {
-    pub paths: bool,
-    pub triggers: bool,
-    pub teleports: bool,
-    pub shapes: bool,
-}
-
-impl RenderUpdates {
-    pub fn new() -> Self {
-        RenderUpdates { paths: false, triggers: false, teleports: false, shapes: false }
-    }
-
-    pub fn paths() -> Self {
-        RenderUpdates { paths: true, triggers: false, teleports: false, shapes: false }
-    }
-
-    pub fn triggers() -> Self {
-        RenderUpdates { paths: false, triggers: true, teleports: false, shapes: false }
-    }
-
-    pub fn teleports() -> Self {
-        RenderUpdates { paths: false, triggers: false, teleports: true, shapes: false }
-    }
-
-    pub fn shapes() -> Self {
-        RenderUpdates { paths: false, triggers: false, teleports: false, shapes: true }
-    }
-
-    pub fn or(&mut self, other: RenderUpdates) {
-        self.paths |= other.paths;
-        self.triggers |= other.triggers;
-        self.teleports |= other.teleports;
-        self.shapes |= other.shapes;
-    }
-}
-
-fn process_events() {
-    let mut loop_events : VecDeque<UIEvent> = VecDeque::new();
-
-    let mut events = EVENTS.lock().unwrap();
-
-    let mut event_list = events.clone();
-    events.clear();
-
-    drop(events);
-
-    while let Some(event) = event_list.pop_front() {
-        match event {
-            UIEvent::DeletePath { path_id } => {
-                PATHLOG.lock().unwrap().delete_path(path_id);
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            }
-            UIEvent::ChangeDirectMode { new } => {
-                PATHLOG.lock().unwrap().set_direct_mode(new);
-            }
-            UIEvent::ChangeAutosave { new } => {
-                PATHLOG.lock().unwrap().set_autosave(new);
-            }
-            UIEvent::ChangeAutoReset { new } => {
-                PATHLOG.lock().unwrap().set_autoreset(new);
-            }
-            UIEvent::SpawnTrigger { index, position, rotation } => {
-                let trigger_size = CONFIG_STATE.lock().unwrap().trigger_sizes[index];
-                if PATHLOG.lock().unwrap().is_empty() {
-                    PATHLOG.lock().unwrap().create_trigger(index, position, rotation, trigger_size);
-                    EVENTS.lock().unwrap().push_back(UIEvent::SpawnTeleport { index: ui::TeleportIndex::Main { i: index } });
-                }
-                else {
-                    // TODO: popup warning
-                }
-            }
-            UIEvent::DeleteTrigger { id } => {
-                let pos = PATHLOG.lock().unwrap().checkpoint_triggers.iter().position(|t| t.id() == id);
-                if let Some(i) = pos {
-                    PATHLOG.lock().unwrap().checkpoint_triggers.remove(i);
-                    continue;
-                }
-
-                let mut main_triggers = PATHLOG.lock().unwrap().main_triggers;
-                let mut main_teleports = UISTATE.lock().unwrap().main_teleports;
-
-                for t in 0..2 {
-                    if let Some(trigger) = main_triggers[t] {
-                        if trigger.id() == id {
-                            main_triggers[t] = None;
-                            main_teleports[t] = None;
-                        }
-                    }
-                }
-
-                PATHLOG.lock().unwrap().main_triggers = main_triggers;
-                UISTATE.lock().unwrap().main_teleports = main_teleports;
-            }
-            UIEvent::StartRecording => {
-                PATHLOG.lock().unwrap().start();
-            }
-            UIEvent::StopRecording => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                let recording_path_id = pathlog.recording_path.id();
-                pathlog.mute_paths.insert(recording_path_id, false);
-                pathlog.solo_paths.insert(recording_path_id, false);
-                pathlog.stop();
-
-                drop(pathlog);
-
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            }
-            UIEvent::ResetRecording => {
-                PATHLOG.lock().unwrap().reset();
-            }
-            UIEvent::ClearTriggers => {
-                PATHLOG.lock().unwrap().clear_triggers();
-                UISTATE.lock().unwrap().main_teleports = [None; 2];
-            }
-            UIEvent::CreateCollection => {
-                PATHLOG.lock().unwrap().create_collection();
-            }
-            UIEvent::RenameCollection { id, new_name } => {
-                PATHLOG.lock().unwrap().rename_collection(id, new_name);
-            }
-            UIEvent::DeleteCollection { id } => {
-                PATHLOG.lock().unwrap().delete_collection(id);
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            }
-            UIEvent::ToggleMute { id } => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                if let Some(b) = pathlog.mute_paths.get_mut(&id) { *b ^= true; }
-                if let Some(b) = pathlog.mute_collections.get_mut(&id) { *b ^= true; }
-                pathlog.update_visible();
-
-                drop(pathlog);
-
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            },
-            UIEvent::ToggleSolo { id } => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                if let Some(b) = pathlog.solo_paths.get_mut(&id) { *b ^= true; }
-                if let Some(b) = pathlog.solo_collections.get_mut(&id) { *b ^= true; }
-                pathlog.update_visible();
-
-                drop(pathlog);
-
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            },
-            UIEvent::ToggleActive { id } => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                if pathlog.active_collection == Some(id) {
-                    pathlog.active_collection = None;
-                }
-                else {
-                    pathlog.active_collection = Some(id);
-                }
-
-                drop(pathlog);
-            }
-            UIEvent::ToggleGoldFilter { collection_id } => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                if !pathlog.filters.contains_key(&collection_id) {
-                    pathlog.filters.insert(collection_id, HighPassFilter::Gold);
-                }
-                else {
-                    if let Some(HighPassFilter::Gold) = pathlog.filters.get(&collection_id) {
-                        pathlog.filters.remove(&collection_id);
-                    }
-                    else {
-                        *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Gold;
-                    }
-                }
-
-                drop(pathlog);
-            }
-            UIEvent::SetPathFilter { collection_id, path_id } => {
-                let mut pathlog = PATHLOG.lock().unwrap();
-
-                match pathlog.filters.get_mut(&collection_id) {
-                    Some(HighPassFilter::Path{ id }) => {
-                        if *id == path_id {
-                            pathlog.filters.remove(&collection_id);
-                        }
-                        else {
-                            *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
-                        }
-                    },
-                    Some(HighPassFilter::Gold) => {
-                        *pathlog.filters.get_mut(&collection_id).unwrap() = HighPassFilter::Path { id: path_id };
-                    }
-                    _ => {
-                        pathlog.filters.insert(collection_id, HighPassFilter::Path{ id: path_id });
-                    }
-                }
-
-                drop(pathlog);
-            }
-            UIEvent::SaveComparison => {
-                let mut ui_state = UISTATE.lock().unwrap();
-
-                if ui_state.file_path_rx.is_none() {
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || {
-                            tx.send(
-                                FileDialog::new()
-                                .add_filter("Celestial Comparison", &[FILE_EXTENTION])
-                                .set_filename("Untitled")
-                                .show_save_single_file()
-                            ).unwrap();
-                    });
-                    ui_state.file_path_rx = Some(RX::Save { rx });
-                    loop_events.push_back(UIEvent::SaveComparison);
-                }
-                else if let Some(RX::Save { rx }) = &ui_state.file_path_rx {
-                    if let Ok(dialog_result) = rx.try_recv() {
-                        drop(ui_state);
-
-                        if let Ok(Some(path)) = dialog_result {
-                            PATHLOG.lock().unwrap().save_comparison(path.to_str().unwrap().to_string());
-                        }
-                        UISTATE.lock().unwrap().file_path_rx = None;
-                    }
-                    else { loop_events.push_back(UIEvent::SaveComparison); }
-                }
-            }
-            UIEvent::LoadComparison => {
-                let mut ui_state = UISTATE.lock().unwrap();
-
-                if ui_state.file_path_rx.is_none() {
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || {
-                        tx.send(
-                            FileDialog::new()
-                            .add_filter("Celestial Comparison", &[FILE_EXTENTION])
-                            .add_filter("Any", &["*"])
-                            .show_open_single_file()
-                        ).unwrap();
-                    });
-                    ui_state.file_path_rx = Some(RX::Load { rx });
-                    loop_events.push_back(UIEvent::LoadComparison);
-                }
-                else if let Some(RX::Load { rx }) = &ui_state.file_path_rx {
-                    if let Ok(dialog_result) = rx.try_recv() {
-                        drop(ui_state);
-
-                        if let Ok(Some(path)) = dialog_result {
-                            let load_res = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string());
-                            // if let Err(e) = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string()) {
-                            if let Err(e) = load_res {
-                                UISTATE.lock().unwrap().file_path_rx = None;
-                                error!("{e}");
-                                continue;
-                            }
-
-                            if let Some(start_trigger) = PATHLOG.lock().unwrap().main_triggers[0] {
-                                UISTATE.lock().unwrap().main_teleports[0] = Some(Teleport {
-                                    location: start_trigger.position,
-                                    rotation: start_trigger.rotation(),
-                                    camera_rotation: None,
-                                })
-                            }
-
-                            if let Some(end_trigger) = PATHLOG.lock().unwrap().main_triggers[1] {
-                                UISTATE.lock().unwrap().main_teleports[1] = Some(Teleport {
-                                    location: end_trigger.position,
-                                    rotation: end_trigger.rotation(),
-                                    camera_rotation: None,
-                                })
-                            }
-                        }
-
-                        UISTATE.lock().unwrap().file_path_rx = None;
-                        loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-                    }
-                    else { loop_events.push_back(UIEvent::LoadComparison); }
-                }
-            }
-            UIEvent::SaveConfig => {
-                if let Err(e) = CONFIG_STATE.lock().unwrap().write(CONFIG_FILE_NAME.to_string()) {
-                    error!("{e}");
-                }
-            },
-            UIEvent::LoadConfig => {
-                if let Err(e) = CONFIG_STATE.lock().unwrap().read(CONFIG_FILE_NAME.to_string()) {
-                    error!("{e}");
-                }
-            },
-            UIEvent::SelectPath { path_id, collection_id, modifier } => {
-                let pathlog = PATHLOG.lock().unwrap();
-
-                let collection = pathlog.get_collection(collection_id).unwrap().clone();
-                let path = pathlog.path(&path_id).unwrap().clone();
-
-                let mut selected = pathlog.selected_paths.get(&collection_id).unwrap().clone();
-
-                drop(pathlog);
-
-                match modifier {
-                    1 => {
-                        let last_id = *selected.last().unwrap_or(&(path.id()));
-                        let mut last_pos = collection.paths().iter().position(|p| *p == last_id).unwrap();
-                        let mut this_pos = collection.paths().iter().position(|p| *p == path.id()).unwrap();
-                        if last_pos < this_pos { (last_pos, this_pos) = (this_pos + 1, last_pos + 1) }
-                        for p in &collection.paths()[this_pos..last_pos] {
-                            if let Some(pos) = selected.iter().position(|id| *id == *p) { selected.remove(pos);}
-                            else { selected.push(*p) }
-                        }
-                    },
-                    2 => {
-                        if let Some(pos) = selected.iter().position(|id| *id == path.id()) { selected.remove(pos);}
-                        else { selected.push(path.id()) }
-                    },
-                    _ => {
-                        selected.clear();
-                        selected.push(path.id());
-                    }
-                }
-
-                PATHLOG.lock().unwrap().selected_paths.insert(collection_id, selected);
-                loop_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
-            }
-            UIEvent::Teleport { index } => {
-                let t = match index {
-                    TeleportIndex::Main { i } => {
-                        UISTATE.lock().unwrap().main_teleports[i]
-                    },
-                    TeleportIndex::Extra { i } => {
-                        UISTATE.lock().unwrap().extra_teleports[i]
-                    },
-                };
-
-                if let Some(teleport) = t {
-                    gamedata::teleport_player(teleport.location, teleport.rotation);
-                    if let Some(cam_rotation) = teleport.camera_rotation {
-                        gamedata::set_camera_rotation(cam_rotation);
-                    }
-                    loop_events.push_back(UIEvent::ResetRecording);
-                }
-            }
-            UIEvent::SpawnTeleport { index } => {
-                let teleport = Some(Teleport {
-                    location: gamedata::get_player_position(),
-                    rotation: gamedata::get_player_rotation(),
-                    camera_rotation: Some(gamedata::get_camera_rotation()),
-                });
-
-                match index {
-                    TeleportIndex::Main { i } => {
-                        UISTATE.lock().unwrap().main_teleports[i] = teleport;
-                    },
-                    TeleportIndex::Extra { i } => {
-                        UISTATE.lock().unwrap().extra_teleports[i] = teleport;
-                    },
-                }
-            }
-            UIEvent::RenderUpdate { update } => {
-                RENDER_UPDATES.lock().unwrap().or(update);
-
-                if update.paths {
-                    PATHLOG.lock().unwrap().update_visible();
-                }
-            }
-        }
-    }
-
-    EVENTS.lock().unwrap().append(&mut loop_events);
-}
 
 unsafe fn init_globals(this: &IDXGISwapChain) {
     let mut sd: DXGI_SWAP_CHAIN_DESC = std::mem::zeroed();
@@ -588,18 +212,18 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
             shapes_vertex_group.constants.view_proj = XMMatrix::from(&view_proj);
 
             pintar.clear_vertex_group(RECORDING_GROUP.to_string());
-            render_path(pintar, RECORDING_GROUP.to_string(), &PATHLOG.lock().unwrap().recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
+            rendering::render_path(pintar, RECORDING_GROUP.to_string(), &PATHLOG.lock().unwrap().recording_path, [1.0, 1.0, 1.0, 0.8], 0.02);
 
             pintar.clear_vertex_group(SHAPES_GROUP.to_string());
-            render_custom_shapes(pintar);
+            rendering::render_custom_shapes(pintar);
 
             pintar.clear_vertex_group(TELEPORTS_GROUP.to_string());
-            render_teleports(pintar);
+            rendering::render_teleports(pintar);
 
-            render_all_paths(pintar);
+            rendering::render_all_paths(pintar);
 
             pintar.clear_vertex_group(TRIGGERS_GROUP.to_string());
-            render_triggers(pintar);
+            rendering::render_triggers(pintar);
 
             pintar.render();
         }
@@ -649,235 +273,18 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
                         .resizable(true)
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
                         .show(ctx, |ui| {
-                            draw_debug(ui);
+                            ui::draw_debug(ui);
                         });
                     }
                     })
                 .expect("successful render");
 
-            process_events();
+            events::process_events();
         }
     }
 
     // Call and return the result of the original method.
     ocular::get_present().expect("Uh oh. Present isn't hooked?!").call(this, sync_interval, flags)
-}
-
-fn render_path(pintar: &mut Pintar, vertex_group: String, path: &Path, color: [f32; 4], thickness: f32) {
-    for segment in path.segments() {
-        if segment.len() < 2 { continue; }
-        pintar.add_line(vertex_group.clone(), segment, color, thickness);
-    }
-}
-
-// fn render_recording_path(pintar: &mut Pintar) {
-//     for segment in path.segments() {
-//         if segment.len() < 2 { continue; }
-//         pintar.add_line(RECORDING_GROUP.to_string(), segment, color, thickness);
-//     }
-// }
-
-fn render_all_paths(pintar: &mut Pintar) {
-    if !RENDER_UPDATES.lock().unwrap().paths { return; }
-
-    RENDER_UPDATES.lock().unwrap().paths = false;
-
-    pintar.clear_vertex_group(PATHS_GROUP.to_string());
-
-    let pathlog = PATHLOG.lock().unwrap();
-
-    let compared_paths = pathlog.compared_paths().clone();
-    let ignored_paths = pathlog.ignored_paths().clone();
-    let selected_paths = pathlog.selected_paths.clone();
-    let comparison = pathlog.comparison();
-
-    drop(pathlog);
-
-    let config = CONFIG_STATE.lock().unwrap();
-
-    let fast_color = config.fast_color;
-    let slow_color = config.slow_color;
-    let gold_color = config.gold_color;
-    let select_color = config.select_color;
-
-    drop(config);
-
-    // let mut visible_collection = PathCollection::new("Visible".to_string());
-    let mut selected : Vec<Uuid> = Vec::new();
-    for s in selected_paths.values() {
-        selected.extend(s);
-    }
-
-    for i in 0..compared_paths.len() {
-        let (path_id, position) = compared_paths[i];
-
-        let fast = fast_color;
-        let slow = slow_color;
-        let lerp = |a: f32, b: f32, t: f32| -> f32 { a * (1.0-t) + b * t };
-        let mut color: [f32; 4];
-        let mut thick: f32;
-
-        if position == 0 {
-            color = gold_color;
-            thick = 0.04;
-        }
-        else if comparison.len == 2 {
-            color = slow_color;
-            thick = 0.02;
-        }
-        else {
-            let p = (position - 1) as f32 / (comparison.len - 2) as f32;
-
-            color = [
-                lerp(fast[0], slow[0], p),
-                lerp(fast[1], slow[1], p),
-                lerp(fast[2], slow[2], p),
-                lerp(fast[3], slow[3], p),
-            ];
-            thick = 0.02;
-        }
-
-        if matches!(comparison.mode, ComparisonMode::Median) {
-            for ignored_id in &ignored_paths[i] {
-                let ignored_color = [color[0], color[1], color[2], color[3] * 0.5];
-                render_path(pintar, PATHS_GROUP.to_string(), &PATHLOG.lock().unwrap().path(&ignored_id).unwrap(), ignored_color, thick);
-            }
-        }
-
-        if selected.contains(&path_id) {
-            color = select_color;
-            thick = 0.04;
-        }
-
-        let pathlog = PATHLOG.lock().unwrap();
-        render_path(pintar, PATHS_GROUP.to_string(), &pathlog.path(&path_id).unwrap(), color, thick);
-    }
-}
-
-fn render_triggers(pintar: &mut Pintar) {
-    let pathlog = PATHLOG.lock().unwrap();
-
-    let checkpoint_triggers = pathlog.checkpoint_triggers.clone();
-    let main_triggers = pathlog.main_triggers;
-
-    drop(pathlog);
-
-    let config = CONFIG_STATE.lock().unwrap();
-
-    let checkpoint_color = config.checkpoint_color;
-    let trigger_colors = config.trigger_colors;
-
-    drop(config);
-
-    for collider in &checkpoint_triggers {
-        pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(checkpoint_color).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-    }
-
-    for i in 0..2 {
-        if let Some(collider) = main_triggers[i] {
-            pintar.add_default_mesh(TRIGGERS_GROUP.to_string(), pintar::primitives::cube::new(trigger_colors[i]).scale(collider.size).rotate(collider.rotation()).translate(collider.position));
-        }
-    }
-}
-
-fn render_teleports(pintar: &mut Pintar) {
-    let config = CONFIG_STATE.lock().unwrap();
-
-    let accent_colors = config.accent_colors;
-
-    drop(config);
-
-    let ui_state = UISTATE.lock().unwrap();
-
-    let teleports = ui_state.extra_teleports;
-
-    drop(ui_state);
-
-    let lerp = |a: u8, b: u8, t: f32| -> f32 { (a as f32 * (1.0-t) + b as f32 * t) / 255. };
-
-    for i in 0..10 {
-        if let Some(teleport) = &teleports[i] {
-            let pos = teleport.location;
-
-            let p = i as f32 / 10.;
-            let mut color = [
-                lerp(accent_colors[0][0], accent_colors[1][0], p),
-                lerp(accent_colors[0][1], accent_colors[1][1], p),
-                lerp(accent_colors[0][2], accent_colors[1][2], p),
-                lerp(accent_colors[0][3], accent_colors[1][3], p),
-            ];
-
-            // info!("DEBUG: color: {color:?}");
-            // let mut color = trigger_colors[0];
-            // color[3] = 0.5;
-            // pos[1] += 1.0;
-            pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-            color[3] *= 0.25;
-            pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-        }
-    }
-
-    // if let Some(teleport) = &teleports[0] {
-    //     let pos = teleport.location;
-    //     let mut color = trigger_colors[0];
-    //     // color[3] = 0.5;
-    //     // pos[1] += 1.0;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-    //     color[3] *= 0.25;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-    // }
-
-    // if let Some(teleport) = &teleports[1] {
-    //     let pos = teleport.location;
-    //     let mut color = trigger_colors[1];
-    //     // color[3] = 0.5;
-    //     // pos[1] += 1.0;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-    //     color[3] *= 0.25;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-    // }
-}
-
-// fn render_custom_shapes(pintar: &mut Pintar, egui: &UIState) {
-fn render_custom_shapes(pintar: &mut Pintar) {
-    let ui_state = UISTATE.lock().unwrap();
-
-    let custom_shapes = ui_state.custom_shapes.clone();
-
-    drop(ui_state);
-
-    for shape in &custom_shapes {
-        if shape.1 { continue; }
-        match shape.0.shape_type {
-            ShapeType::Box => {
-                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::cube::new(shape.0.color.to_rgba_premultiplied())
-                    .scale(shape.0.size)
-                    .rotate(shape.0.rotation)
-                    .translate(shape.0.position));
-            }
-            ShapeType::Sphere => {
-                let mut size = shape.0.size;
-                size[1] = size[0];
-                size[2] = size[0];
-                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::sphere::new(shape.0.color.to_rgba_premultiplied())
-                    .scale(size)
-                    .translate(shape.0.position));
-            }
-            ShapeType::Cylinder => {
-                let mut size = shape.0.size;
-                size[2] = size[0];
-                pintar.add_default_mesh(SHAPES_GROUP.to_string(), pintar::primitives::cylinder::new(shape.0.color.to_rgba_premultiplied())
-                    .scale(size)
-                    .translate(shape.0.position));
-            }
-        }
-    }
-}
-
-fn draw_debug(ui: &mut egui::Ui) {
-    ui.add(egui::Label::new(
-        RichText::new(format!("{:?}", unsafe { IS_POINTER_OVER_EGUI }))
-    ).selectable(false));
 }
 
 extern "system" fn hk_resize_buffers(

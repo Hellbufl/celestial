@@ -2,13 +2,14 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::fmt::Debug;
 use egui::epaint::Hsva;
-use egui::{Color32, Modifiers};
+use egui::{Color32, Modifiers, RichText};
 use uuid::Uuid;
 use egui_keybind::Keybind;
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
+use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, IS_POINTER_OVER_EGUI, PATHLOG, RENDER_UPDATES, RX, UISTATE};
+use crate::events::CelEvent;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
@@ -24,76 +25,6 @@ pub struct Teleport {
 pub enum TeleportIndex {
     Main { i: usize },
     Extra { i: usize },
-}
-
-#[derive(Clone)]
-pub enum UIEvent {
-    DeletePath {
-        path_id: Uuid,
-    },
-    ChangeDirectMode {
-        new: bool,
-    },
-    ChangeAutosave {
-        new: bool,
-    },
-    ChangeAutoReset {
-        new: bool,
-    },
-    SpawnTrigger {
-        index: usize,
-        position: [f32; 3],
-        rotation: [f32; 3],
-    },
-    DeleteTrigger {
-        id: Uuid,
-    },
-    StartRecording,
-    StopRecording,
-    ResetRecording,
-    ClearTriggers,
-    CreateCollection,
-    RenameCollection {
-        id: Uuid,
-        new_name: String,
-    },
-    DeleteCollection {
-        id: Uuid,
-    },
-    ToggleMute {
-        id: Uuid,
-    },
-    ToggleSolo {
-        id: Uuid,
-    },
-    ToggleActive {
-        id: Uuid,
-    },
-    ToggleGoldFilter {
-        collection_id: Uuid,
-    },
-    SetPathFilter {
-        collection_id: Uuid,
-        path_id: Uuid,
-    },
-    SaveComparison,
-    LoadComparison,
-    SaveConfig,
-    LoadConfig,
-    SelectPath {
-        path_id: Uuid,
-        collection_id: Uuid,
-        modifier: u8,
-    },
-    Teleport {
-        index: TeleportIndex,
-    },
-    SpawnTeleport {
-        index: TeleportIndex,
-    },
-    RenderUpdate {
-        update: RenderUpdates,
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -133,7 +64,7 @@ impl Shape {
 }
 
 pub struct UIState {
-    // pub events: VecDeque<UIEvent>,
+    // pub events: VecDeque<CelEvent>,
     pub file_path_rx: Option<RX>,
     tab: Tab,
     pub modifier: u8,
@@ -182,7 +113,7 @@ pub fn check_input(input: &egui::RawInput) {
 
     drop(config);
 
-    let mut new_events : VecDeque<UIEvent> = VecDeque::new();
+    let mut new_events : VecDeque<CelEvent> = VecDeque::new();
 
     let mut modifier = 0;
 
@@ -197,9 +128,9 @@ pub fn check_input(input: &egui::RawInput) {
     for input_event in &input.events {
         if start_keybind.compare_to_event(input_event) {
             if direct_mode {
-                new_events.push_back(UIEvent::StartRecording);
+                new_events.push_back(CelEvent::StartRecording);
             } else {
-                new_events.push_back(UIEvent::SpawnTrigger {
+                new_events.push_back(CelEvent::SpawnTrigger {
                     index: 0,
                     position: gamedata::get_player_position(),
                     rotation: gamedata::get_player_rotation(),
@@ -209,9 +140,9 @@ pub fn check_input(input: &egui::RawInput) {
 
         if stop_keybind.compare_to_event(input_event) {
             if direct_mode {
-                new_events.push_back(UIEvent::StopRecording);
+                new_events.push_back(CelEvent::StopRecording);
             } else {
-                new_events.push_back(UIEvent::SpawnTrigger {
+                new_events.push_back(CelEvent::SpawnTrigger {
                     index: 1,
                     position: gamedata::get_player_position(),
                     rotation: gamedata::get_player_rotation(),
@@ -220,43 +151,43 @@ pub fn check_input(input: &egui::RawInput) {
         }
 
         if reset_keybind.compare_to_event(input_event) {
-            new_events.push_back(UIEvent::ResetRecording);
+            new_events.push_back(CelEvent::ResetRecording);
         }
 
         if clear_keybind.compare_to_event(input_event) {
-            new_events.push_back(UIEvent::ClearTriggers);
+            new_events.push_back(CelEvent::ClearTriggers);
         }
 
         if teleport_keybinds[0].compare_to_event(input_event) {
-            new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Main { i: 0 } });
+            new_events.push_back(CelEvent::Teleport { index: TeleportIndex::Main { i: 0 } });
         }
 
         if teleport_keybinds[1].compare_to_event(input_event) {
-            new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Main { i: 1 } });
+            new_events.push_back(CelEvent::Teleport { index: TeleportIndex::Main { i: 1 } });
         }
 
         for i in 0..10 {
             if extra_teleport_keybinds[i].compare_to_event(input_event) {
-                new_events.push_back(UIEvent::Teleport { index: TeleportIndex::Extra { i } });
+                new_events.push_back(CelEvent::Teleport { index: TeleportIndex::Extra { i } });
             }
         }
 
         for i in 0..10 {
             if spawn_teleport_keybinds[i].compare_to_event(input_event) {
-                new_events.push_back(UIEvent::SpawnTeleport { index: TeleportIndex::Extra { i } });
+                new_events.push_back(CelEvent::SpawnTeleport { index: TeleportIndex::Extra { i } });
             }
         }
 
         // if spawn_teleport_keybinds[0].compare_to_event(e) {
-        //     new_events.push_back(UIEvent::SpawnTeleport { index: 0 });
+        //     new_events.push_back(CelEvent::SpawnTeleport { index: 0 });
         // }
 
         // if spawn_teleport_keybinds[1].compare_to_event(e) {
-        //     new_events.push_back(UIEvent::SpawnTeleport { index: 1 });
+        //     new_events.push_back(CelEvent::SpawnTeleport { index: 1 });
         // }
 
         // if config.spawn_checkpoint_keybind.compare_to_event(e) {
-        //     egui.new_events.push_back(UIEvent::SpawnTrigger {
+        //     egui.new_events.push_back(CelEvent::SpawnTrigger {
         //         index: 2,
         //         position: gamedata::get_player_position(),
         //         rotation: gamedata::get_player_rotation(),
@@ -274,6 +205,12 @@ pub fn check_input(input: &egui::RawInput) {
     let mut events = EVENTS.lock().unwrap();
 
     events.append(&mut new_events);
+}
+
+pub fn draw_debug(ui: &mut egui::Ui) {
+    ui.add(egui::Label::new(
+        RichText::new(format!("{:?}", unsafe { IS_POINTER_OVER_EGUI }))
+    ).selectable(false));
 }
 
 pub fn draw_ui(ui: &mut egui::Ui) {
@@ -358,7 +295,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     drop(ui_state);
 
-    let mut new_events : VecDeque<UIEvent> = VecDeque::new();
+    let mut new_events : VecDeque<CelEvent> = VecDeque::new();
     let mut mute_toggles : Vec<Uuid> = Vec::new();
     let mut solo_toggles : Vec<Uuid> = Vec::new();
     let mut to_clear : Vec<Uuid> = Vec::new();
@@ -417,7 +354,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                         .min_size(egui::vec2(19.0, 19.0))
                         .rounding(egui::Rounding::same(10.0))
                     ).clicked() {
-                    new_events.push_back(UIEvent::ToggleActive { id: collection_id });
+                    new_events.push_back(CelEvent::ToggleActive { id: collection_id });
                 }
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
@@ -427,7 +364,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     let response = ui.add(egui::TextEdit::singleline(&mut renaming_name).desired_width(200.0));
                     if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let new_name = renaming_name.clone();
-                        new_events.push_back(UIEvent::RenameCollection { id: collection_id, new_name });
+                        new_events.push_back(CelEvent::RenameCollection { id: collection_id, new_name });
                         renaming_collection = None;
                     }
                 }
@@ -440,7 +377,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if delete_mode {
                     if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                        new_events.push_back(UIEvent::DeleteCollection { id: collection_id });
+                        new_events.push_back(CelEvent::DeleteCollection { id: collection_id });
                     }
                 }
 
@@ -481,7 +418,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 }
 
                 if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    new_events.push_back(UIEvent::ToggleGoldFilter { collection_id });
+                    new_events.push_back(CelEvent::ToggleGoldFilter { collection_id });
                 }
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
@@ -533,10 +470,10 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                 if ui.add(egui::Button::new("Save").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    new_events.push_back(UIEvent::SaveComparison);
+                    new_events.push_back(CelEvent::SaveComparison);
                 }
                 if ui.add(egui::Button::new("Load").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    new_events.push_back(UIEvent::LoadComparison);
+                    new_events.push_back(CelEvent::LoadComparison);
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
@@ -560,7 +497,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    new_events.push_back(UIEvent::CreateCollection);
+                    new_events.push_back(CelEvent::CreateCollection);
                 }
             });
             ui.end_row();
@@ -573,7 +510,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     if pathlog.comparison().mode != comparison_mode {
         pathlog.set_comparison_mode(comparison_mode);
-        new_events.push_back(UIEvent::RenderUpdate { update: RenderUpdates::paths() });
+        new_events.push_back(CelEvent::RenderUpdate { update: RenderUpdates::paths() });
     }
 
     for collection_id in to_clear {
@@ -593,11 +530,11 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut events = EVENTS.lock().unwrap();
 
     for collection_id in solo_toggles {
-        events.push_back(UIEvent::ToggleSolo { id: collection_id });
+        events.push_back(CelEvent::ToggleSolo { id: collection_id });
     }
 
     for collection_id in mute_toggles {
-        events.push_back(UIEvent::ToggleMute { id: collection_id });
+        events.push_back(CelEvent::ToggleMute { id: collection_id });
     }
 
     events.append(&mut new_events);
@@ -631,7 +568,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
     drop(ui_state);
 
-    let mut new_events : VecDeque<UIEvent> = VecDeque::new();
+    let mut new_events : VecDeque<CelEvent> = VecDeque::new();
     let mut mute_toggle = false;
     let mut solo_toggle = false;
     let mut delete = false;
@@ -693,10 +630,10 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0)));
 
         if time_response.clicked() {
-            new_events.push_back(UIEvent::SelectPath { path_id, collection_id, modifier: mods });
+            new_events.push_back(CelEvent::SelectPath { path_id, collection_id, modifier: mods });
         }
         if time_response.secondary_clicked() {
-            new_events.push_back(UIEvent::SetPathFilter { collection_id, path_id });
+            new_events.push_back(CelEvent::SetPathFilter { collection_id, path_id });
         }
 
         ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
@@ -729,18 +666,18 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
     let mut events = EVENTS.lock().unwrap();
 
     if mute_toggle {
-        events.push_back(UIEvent::ToggleMute { id: path_id });
+        events.push_back(CelEvent::ToggleMute { id: path_id });
     }
 
     if solo_toggle {
-        events.push_back(UIEvent::ToggleSolo { id: path_id });
+        events.push_back(CelEvent::ToggleSolo { id: path_id });
     }
 
     drop(events);
 
     if delete {
         PATHLOG.lock().unwrap().selected_paths.get_mut(&collection_id).unwrap().clear();
-        EVENTS.lock().unwrap().push_back(UIEvent::DeletePath { path_id });
+        EVENTS.lock().unwrap().push_back(CelEvent::DeletePath { path_id });
     }
 
     UISTATE.lock().unwrap().delete_mode = delete_mode;
@@ -771,7 +708,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
     ui.separator();
 
     // let mut delete_list: Vec<Uuid> = Vec::new();
-    let mut new_events: Vec<UIEvent> = Vec::new();
+    let mut new_events: Vec<CelEvent> = Vec::new();
 
     for t in 0..(checkpoint_triggers_len + 2) {
         draw_trigger(ui, t, &mut new_events);
@@ -856,8 +793,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
     ui_state.delete_mode = delete_mode;
 }
 
-// fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, delete_list: &mut Vec<Uuid>) {
-fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<UIEvent>) {
+fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<CelEvent>) {
     let pathlog = PATHLOG.lock().unwrap();
 
     let mut label = "Checkpoint";
@@ -901,7 +837,7 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<UI
             if delete_mode {
                 if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
                     // delete_list.push(trigger.id());
-                    new_events.push(UIEvent::DeleteTrigger { id: trigger.id() });
+                    new_events.push(CelEvent::DeleteTrigger { id: trigger.id() });
                 }
             }
             // ui.color_edit_button_hsva(&mut shape.color);
@@ -1004,7 +940,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
-    let mut new_events : VecDeque<UIEvent> = VecDeque::new();
+    let mut new_events : VecDeque<CelEvent> = VecDeque::new();
 
     ui.separator();
 
@@ -1017,7 +953,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             // ui.label("Direct Recording Mode");
             // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             //     if toggle_switch(ui, &mut config.direct_mode).clicked() {
-            //         state.ui_state.events.push_back(UIEvent::ChangeDirectMode { new: config.direct_mode });
+            //         state.ui_state.events.push_back(CelEvent::ChangeDirectMode { new: config.direct_mode });
             //     }
             // });
             // ui.end_row();
@@ -1026,7 +962,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if toggle_switch(ui, &mut autosave).clicked() {
                     let new = autosave;
-                    new_events.push_back(UIEvent::ChangeAutosave { new });
+                    new_events.push_back(CelEvent::ChangeAutosave { new });
                 }
             });
             ui.end_row();
@@ -1035,7 +971,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let new = autoreset;
                 if toggle_switch(ui, &mut autoreset).clicked() {
-                    new_events.push_back(UIEvent::ChangeAutoReset { new });
+                    new_events.push_back(CelEvent::ChangeAutoReset { new });
                 }
             });
             ui.end_row();
@@ -1315,10 +1251,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
         if ui.add(egui::Button::new("Save")).clicked() {
-            new_events.push_back(UIEvent::SaveConfig);
+            new_events.push_back(CelEvent::SaveConfig);
         }
         if ui.add(egui::Button::new("Load")).clicked() {
-            new_events.push_back(UIEvent::LoadConfig);
+            new_events.push_back(CelEvent::LoadConfig);
         }
     });
 
@@ -1605,7 +1541,7 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                 if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    // state.ui_state.events.push_back(UIEvent::CreateShape);
+                    // state.ui_state.events.push_back(CelEvent::CreateShape);
                     let mut new_shape = Shape::new();
                     new_shape.position = gamedata::get_player_position();
                     new_shape.rotation = gamedata::get_player_rotation();
