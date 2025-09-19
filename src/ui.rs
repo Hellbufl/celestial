@@ -8,7 +8,7 @@ use egui_keybind::Keybind;
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, IS_POINTER_OVER_EGUI, PATHLOG, RENDER_UPDATES, RX, UISTATE};
+use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
 use crate::events::CelEvent;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -209,8 +209,8 @@ pub fn check_input(input: &egui::RawInput) {
 
 pub fn draw_debug(ui: &mut egui::Ui) {
     ui.add(egui::Label::new(
-        RichText::new(format!("{:?}", unsafe { IS_POINTER_OVER_EGUI }))
-    ).selectable(false));
+        RichText::new(format!("{:?}", gamedata::get_camera_rotation()))
+    ));
 }
 
 pub fn draw_ui(ui: &mut egui::Ui) {

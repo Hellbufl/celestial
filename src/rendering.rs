@@ -202,26 +202,6 @@ pub fn render_teleports(pintar: &mut Pintar) {
             pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
         }
     }
-
-    // if let Some(teleport) = &teleports[0] {
-    //     let pos = teleport.location;
-    //     let mut color = trigger_colors[0];
-    //     // color[3] = 0.5;
-    //     // pos[1] += 1.0;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-    //     color[3] *= 0.25;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-    // }
-
-    // if let Some(teleport) = &teleports[1] {
-    //     let pos = teleport.location;
-    //     let mut color = trigger_colors[1];
-    //     // color[3] = 0.5;
-    //     // pos[1] += 1.0;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
-    //     color[3] *= 0.25;
-    //     pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
-    // }
 }
 
 // fn render_custom_shapes(pintar: &mut Pintar, egui: &UIState) {

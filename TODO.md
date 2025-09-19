@@ -1,6 +1,6 @@
 ### Todo
 
-- teleports tab
+- clear and delete teleports shortcut
 - 1.01 support (wip)
 
 - configurable input supression

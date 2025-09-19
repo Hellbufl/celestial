@@ -40,6 +40,17 @@ lazy_static! {
 
     static ref OFFSETS : Offsets = unsafe {
         match get_game_version() {
+            GameVersion::V101 => Offsets {
+                process_start: GetModuleHandleA(PCSTR::null()).unwrap().0,
+                player_actor: 0x16053E8,
+                player_position: 0x50,
+                player_rotation: 0x90,
+                view_matrix: 0x19C73C0,
+                camera_rotation: 0x1605700,
+                teleport_function: 0x1AC2C0, // crashes
+                loading_flag: 0x11435c0,
+                cutscene_flag: 0xfa54e8,
+            },
             GameVersion::V102 => Offsets {
                 process_start: GetModuleHandleA(PCSTR::null()).unwrap().0,
                 player_actor: 0x1020948,
@@ -52,8 +63,7 @@ lazy_static! {
                 cutscene_flag: 0x102A244,
             },
             _ => {
-                error!("Game version not yet supported!");
-                exit(1);
+                panic!("Game version not yet supported!");
             }
             // GameVersion::V102 => {},
             // GameVersion::WinStore => {},
@@ -61,9 +71,6 @@ lazy_static! {
         }
     };
 }
-
-// const PLAYER_ACTOR_OFFSET : isize = 0x1020948; // this one is persistent when going back to menu
-// const PLAYER_ACTOR_OFFSET : usize = 0x01020BE0;
 
 unsafe fn get_game_version() -> GameVersion {
     let hmodule = GetModuleHandleA(PCSTR::null()).unwrap();
