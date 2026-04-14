@@ -330,11 +330,11 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    let scroll_height = ui.available_height() - 30.0;
+    let scroll_height = ui.available_height() - 41.0;
 
     egui::ScrollArea::vertical()
         .auto_shrink(true)
-        .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+        // .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
         .max_height(scroll_height)
         .show(ui, |ui| {
             if ui.interact_bg(egui::Sense::click()).clicked() {
