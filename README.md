@@ -37,7 +37,11 @@ I'm also happy to receive pull requests :)
 
 After multiple recordings with the same set of triggers, the different paths will be sorted from fastest to slowest within their collection and colored on a gradient (default: green -> red) with the fastest being highlighted (default: gold).
 
-### High Pass Filters
+### Comparison Modes
+At the top of the comparison tab, you can select one of three comparison modes. The default mode "All" will simply sort all paths from all collections and display the gradient in that order.
+In "Gold" mode, only the fastest times of each collection are compared and in "Median" mode, the collections are sorted by their median time and all paths from one collection are displayed with the same color.
+
+### Time Filters
 There are two types of filters marked by the little up-arrow.
 If you activate the filter mode on a collection, that collection will only accept a new path if it is faster than all paths in that collection.
 You can also set the filter on a specific time by right clicking on it. Now only paths faster than this time will be accepted and the filter will stay fixed.
