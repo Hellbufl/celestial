@@ -10,8 +10,10 @@ use egui_keybind::{Bind, Keybind};
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, RenderUpdates, UI_STATE, gamedata, pathlog};
+use crate::{CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, RenderUpdates, SCREEN_DIMENSIONS, UI_STATE, gamedata, pathlog};
 use crate::events::CelEvent;
+
+const FONT_SIZE: f32 = 12.;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab { Comparison, Paths, Triggers, Config, Credits, CustomShapes }
@@ -66,7 +68,7 @@ impl Shape {
 }
 
 pub struct UIState {
-    // pub events: VecDeque<CelEvent>,
+    pub screen_scale: f32,
     pub file_path_rx: Option<RX>,
     tab: Tab,
     pub modifier: u8,
@@ -84,7 +86,7 @@ pub struct UIState {
 impl UIState {
     pub fn init() -> UIState {
         let ui_state = UIState {
-            // events: VecDeque::new(),
+            screen_scale: 1.,
             file_path_rx: None,
             tab: Tab::Comparison,
             modifier: 0,
@@ -222,14 +224,17 @@ pub fn check_input(input: &egui::RawInput) {
 }
 
 pub fn draw_debug(ui: &mut egui::Ui) {
+    let render_size = SCREEN_DIMENSIONS.lock().unwrap().render_size;
+    let window_size = SCREEN_DIMENSIONS.lock().unwrap().window_size;
     ui.add(egui::Label::new(
-        RichText::new(format!("{:?}", gamedata::get_camera_rotation()))
+        RichText::new(format!("{:?}\n{:?}\n{:?}", render_size, window_size, UI_STATE.lock().unwrap().screen_scale))
     ));
 }
 
 pub fn draw_ui(ui: &mut egui::Ui) {
     let config = CONFIG_STATE.lock().unwrap();
 
+    let zoom = config.zoom;
     let accent_colors = config.accent_colors;
     let shapes_enabled = config.shapes_enabled;
 
@@ -237,30 +242,33 @@ pub fn draw_ui(ui: &mut egui::Ui) {
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let mut tab = ui_state.tab;
 
     drop(ui_state);
 
+    let scale = screen_scale * zoom;
+
     ui.visuals_mut().selection.bg_fill = accent_colors[0];
 
-    ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
+    ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0) * scale;
     // ui.spacing_mut().window_margin = egui::Margin::same(50.0);
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-        ui.selectable_value(&mut tab, Tab::Comparison, egui::RichText::new("Comparison").strong());
-        ui.selectable_value(&mut tab, Tab::Triggers, egui::RichText::new("Triggers").strong());
+        ui.selectable_value(&mut tab, Tab::Comparison, egui::RichText::new("Comparison").size(FONT_SIZE * scale).strong());
+        ui.selectable_value(&mut tab, Tab::Triggers, egui::RichText::new("Triggers").size(FONT_SIZE * scale).strong());
         if shapes_enabled {
-            ui.selectable_value(&mut tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").strong());
+            ui.selectable_value(&mut tab, Tab::CustomShapes, egui::RichText::new("Custom Shapes").size(FONT_SIZE * scale).strong());
         }
-        ui.selectable_value(&mut tab, Tab::Config, egui::RichText::new("Config").strong());
-        ui.selectable_value(&mut tab, Tab::Credits, egui::RichText::new("Credits").strong());
+        ui.selectable_value(&mut tab, Tab::Config, egui::RichText::new("Config").size(FONT_SIZE * scale).strong());
+        ui.selectable_value(&mut tab, Tab::Credits, egui::RichText::new("Credits").size(FONT_SIZE * scale).strong());
     });
 
     UI_STATE.lock().unwrap().tab = tab;
 
     // ui.separator();
 
-    ui.spacing_mut().item_spacing = egui::vec2(10.0, 3.0);
+    ui.spacing_mut().item_spacing = egui::vec2(10.0, 3.0) * scale;
 
     ui.separator();
 
@@ -299,18 +307,21 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     let config = CONFIG_STATE.lock().unwrap();
 
+    let zoom = config.zoom;
     let accent_colors = config.accent_colors;
 
     drop(config);
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let mut renaming_collection = ui_state.renaming_collection;
     let mut renaming_name = ui_state.renaming_name.clone();
     let mut delete_mode = ui_state.delete_mode;
 
     drop(ui_state);
 
+    let scale = screen_scale * zoom;
     let mut new_events : VecDeque<CelEvent> = VecDeque::new();
     let mut mute_toggles : Vec<Uuid> = Vec::new();
     let mut solo_toggles : Vec<Uuid> = Vec::new();
@@ -319,8 +330,9 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     // ui.separator();
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-        egui::ComboBox::new("comp_mode_drop_down", "Comparison Mode")
-            .selected_text(format!("{:?}", comparison_mode))
+        egui::ComboBox::new("comp_mode_drop_down", RichText::new("Comparison Mode").size(FONT_SIZE * scale))
+            // .selected_text(format!("{:?}", comparison_mode))
+            .selected_text(RichText::new(format!("{:?}", comparison_mode)).size(FONT_SIZE * scale))
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut comparison_mode, pathlog::ComparisonMode::All, "All");
                 ui.selectable_value(&mut comparison_mode, pathlog::ComparisonMode::Gold, "Gold");
@@ -330,7 +342,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    let scroll_height = ui.available_height() - 41.0;
+    let scroll_height = ui.available_height() - 41.0 * scale;
 
     egui::ScrollArea::vertical()
         .auto_shrink(true)
@@ -355,7 +367,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
                 egui::Grid::new(collection_id.to_string() + "buttons")
                 .num_columns(2)
-                .spacing([40.0, 4.0])
+                .spacing(egui::vec2(40.0, 4.0) * scale)
                 .striped(true)
                 .show(ui, |ui| {
                     // if ui.interact_bg(egui::Sense::click()).clicked() {
@@ -365,7 +377,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                        let mut arm_button_text = egui::RichText::new("\u{2B55}");
+                        let mut arm_button_text = egui::RichText::new("\u{2B55}").size(FONT_SIZE * scale);
                         if active_collection == Some(collection_id) {
                             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[1].gamma_multiply(1.2);
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[1];
@@ -374,8 +386,8 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
                         if ui.add(
                             egui::Button::new(arm_button_text)
-                                .min_size(egui::vec2(19.0, 19.0))
-                                .rounding(egui::Rounding::same(10.0))
+                                .min_size(egui::vec2(19.0, 19.0) * scale)
+                                .rounding(egui::Rounding::same(10.0 * scale))
                             ).clicked() {
                             new_events.push_back(CelEvent::ToggleActive { id: collection_id });
                         }
@@ -384,7 +396,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                         ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
                         if renaming_collection == Some(collection_id) {
-                            let response = ui.add_sized([240.0, 19.0], egui::TextEdit::singleline(&mut renaming_name).char_limit(32));
+                            let response = ui.add_sized(egui::vec2(240.0, 19.0) * scale, egui::TextEdit::singleline(&mut renaming_name).char_limit(32));
                             if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 let new_name = renaming_name.clone().trim().to_string();
                                 new_events.push_back(CelEvent::RenameCollection { id: collection_id, new_name });
@@ -399,12 +411,12 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                         if delete_mode {
-                            if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                            if ui.add(egui::Button::new(RichText::new("\u{1F5D9}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                                 new_events.push_back(CelEvent::DeleteCollection { id: collection_id });
                             }
 
-                            let button_move_down = ui.add(egui::Button::new("\u{1F53B}").min_size(egui::vec2(19.0, 19.0)));
-                            let button_move_up = ui.add(egui::Button::new("\u{1F53A}").min_size(egui::vec2(19.0, 19.0)));
+                            let button_move_down = ui.add(egui::Button::new(RichText::new("\u{1F53B}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale));
+                            let button_move_up = ui.add(egui::Button::new(RichText::new("\u{1F53A}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale));
 
                             if button_move_down.clicked_by(egui::PointerButton::Primary) {
                                 new_events.push_back(CelEvent::MoveCollection { id: collection_id, direction: 1, to_end: false });
@@ -421,7 +433,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                             }
                         }
                         else {
-                            let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
+                            let mut solo_button_text = egui::RichText::new("\u{1F1F8}").size(FONT_SIZE * scale);
 
                             if solo {
                                 ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
@@ -429,35 +441,35 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                                 solo_button_text = solo_button_text.strong();
                             }
 
-                            if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                            if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                                 solo_toggles.push(collection_id);
                             }
 
                             ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-                            let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+                            let mut mute_button_text = egui::RichText::new("\u{1F1F2}").size(FONT_SIZE * scale);
                             if mute {
                                 ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                                 ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                                 mute_button_text = mute_button_text.strong();
                             }
 
-                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                                 mute_toggles.push(collection_id);
                             }
 
                             ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-                            let mut mute_button_text = egui::RichText::new("\u{2B06}");
+                            let mut mute_button_text = egui::RichText::new("\u{2B06}").size(FONT_SIZE * scale);
                             if let Some(HighPassFilter::Gold) = high_pass {
                                 ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                                 ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
                                 mute_button_text = mute_button_text.strong();
                             }
 
-                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                                 new_events.push_back(CelEvent::ToggleGoldFilter { collection_id });
                             }
 
@@ -472,7 +484,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     .show(ui, |ui| {
                         egui::Grid::new(collection_id.to_string() + "paths")
                             .num_columns(2)
-                            .spacing([40.0, 4.0])
+                            .spacing(egui::vec2(40.0, 4.0) * scale)
                             .striped(false)
                             .with_row_color(|i, _style| {
                                 // this is not pretty but I'm just glad it works for now
@@ -507,14 +519,14 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     egui::Grid::new("saveload")
         .num_columns(2)
-        .spacing([40.0, 4.0])
+        .spacing(egui::vec2(40.0, 4.0) * scale)
         .striped(true)
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                if ui.add(egui::Button::new("Save").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(RichText::new("Save").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     new_events.push_back(CelEvent::SaveComparison);
                 }
-                if ui.add(egui::Button::new("Load").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(RichText::new("Load").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     new_events.push_back(CelEvent::LoadComparison);
                 }
             });
@@ -523,7 +535,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                 let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
                 let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-                let mut delete_button_text = egui::RichText::new("\u{2796}");
+                let mut delete_button_text = egui::RichText::new("\u{2796}").size(FONT_SIZE * scale);
 
                 if delete_mode {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
@@ -531,14 +543,14 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
                     delete_button_text = delete_button_text.strong();
                 }
 
-                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     delete_mode ^= true;
                 }
 
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-                if ui.add(egui::Button::new("\u{2795}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(RichText::new("\u{2795}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     new_events.push_back(CelEvent::CreateCollection);
                 }
             });
@@ -598,6 +610,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
     let config = CONFIG_STATE.lock().unwrap();
 
+    let zoom = config.zoom;
     let accent_colors = config.accent_colors;
     let select_color = config.select_color;
 
@@ -605,11 +618,13 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let mods = ui_state.modifier;
     let delete_mode = ui_state.delete_mode;
 
     drop(ui_state);
 
+    let scale = screen_scale * zoom;
     let mut new_events : VecDeque<CelEvent> = VecDeque::new();
     let mut mute_toggle = false;
     let mut solo_toggle = false;
@@ -620,7 +635,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
         let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-        let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+        let mut mute_button_text = egui::RichText::new("\u{1F1F2}").size(FONT_SIZE * scale);
 
         if mute {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
@@ -628,14 +643,14 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
             mute_button_text = mute_button_text.strong();
         }
 
-        if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+        if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
             mute_toggle = true;
         }
 
         ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
         ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
 
-        let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
+        let mut solo_button_text = egui::RichText::new("\u{1F1F8}").size(FONT_SIZE * scale);
 
         if solo {
             ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
@@ -643,7 +658,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
             solo_button_text = solo_button_text.strong();
         }
 
-        if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+        if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
             solo_toggle = true;
         }
 
@@ -665,9 +680,9 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
             ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::from_gray(42);
         }
 
-        let time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", path_time / 60000, (path_time % 60000) / 1000, (path_time % 1000)));
+        let time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", path_time / 60000, (path_time % 60000) / 1000, (path_time % 1000))).size(FONT_SIZE * scale);
 
-        let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0)));
+        let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0) * scale));
 
         if time_response.clicked() {
             new_events.push_back(CelEvent::SelectPath { path_id, collection_id, modifier: mods });
@@ -687,7 +702,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         if let Some(filter) = high_pass {
             if let HighPassFilter::Path{ id } = filter {
                 if id == path_id {
-                    ui.label("\u{2B06}");
+                    ui.label(RichText::new("\u{2B06}").size(FONT_SIZE * scale));
                 }
             }
         }
@@ -695,7 +710,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
         if delete_mode {
-            if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+            if ui.add(egui::Button::new(RichText::new("\u{1F5D9}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                 delete = true;
             }
         }
@@ -735,19 +750,22 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let mut delete_mode = ui_state.delete_mode;
 
     drop(ui_state);
 
     let config = CONFIG_STATE.lock().unwrap();
 
+    let zoom = config.zoom;
     let accent_colors = config.accent_colors;
 
     drop(config);
 
+    let scale = screen_scale * zoom;
     let mut new_events: Vec<CelEvent> = Vec::new();
 
-    let scroll_height = ui.available_height() - 30.0;
+    let scroll_height = ui.available_height() - 30.0 * scale;
 
     egui::ScrollArea::vertical()
         .auto_shrink(true)
@@ -762,7 +780,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     egui::Grid::new("util")
         .num_columns(2)
-        .spacing([40.0, 4.0])
+        .spacing(egui::vec2(40.0, 4.0) * scale)
         .striped(true)
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |_ui| {
@@ -789,7 +807,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
                 let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
                 let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-                let mut delete_button_text = egui::RichText::new("\u{2796}");
+                let mut delete_button_text = egui::RichText::new("\u{2796}").size(FONT_SIZE * scale);
 
                 if delete_mode {
                     ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
@@ -797,7 +815,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
                     delete_button_text = delete_button_text.strong();
                 }
 
-                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(delete_button_text).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     delete_mode ^= true;
                 }
 
@@ -843,13 +861,16 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let delete_mode = ui_state.delete_mode;
 
     drop(ui_state);
 
+    let scale = screen_scale * CONFIG_STATE.lock().unwrap().zoom;
+
     egui::Grid::new(trigger.id().to_string() + "buttons")
     .num_columns(2)
-    .spacing([40.0, 4.0])
+    .spacing(egui::vec2(40.0, 4.0) * scale)
     .striped(true)
     .show(ui, |ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
@@ -861,12 +882,12 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
             //     ui.selectable_value(&mut shape.0.shape_type, ShapeType::Cylinder, "Cylinder");
             // });
 
-            ui.label(label);
+            ui.label(RichText::new(label).size(FONT_SIZE * scale));
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             if delete_mode {
-                if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                if ui.add(egui::Button::new(RichText::new("\u{1F5D9}").size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0) * scale)).clicked() {
                     // delete_list.push(trigger.id());
                     new_events.push(CelEvent::DeleteTrigger { id: trigger.id() });
                 }
@@ -880,11 +901,11 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
         .show(ui, |ui| {
             egui::Grid::new(trigger.id().to_string() + "data")
             .num_columns(2)
-            .spacing([10.0, 4.0])
+            .spacing(egui::vec2(10.0, 4.0) * scale)
             .striped(false)
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                    ui.label("Position");
+                    ui.label(RichText::new("Position").size(FONT_SIZE * scale));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     ui.add(egui::DragValue::new(&mut trigger.position[2]).speed(0.1));
@@ -896,7 +917,7 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
                 let mut rot = trigger.rotation();
 
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                    ui.label("Rotation");
+                    ui.label(RichText::new("Rotation").size(FONT_SIZE * scale));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     if ui.add(egui::DragValue::new(&mut rot[2]).speed(0.01).clamp_range(-PI..=PI)).changed() { trigger.set_rotation(rot); };
@@ -906,7 +927,7 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
                 ui.end_row();
 
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                    ui.label("Size");
+                    ui.label(RichText::new("Size").size(FONT_SIZE * scale));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     ui.add(egui::DragValue::new(&mut trigger.size[2]).speed(0.1).clamp_range(0.0..=42069.0));
@@ -980,13 +1001,15 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     let ui_state = UI_STATE.lock().unwrap();
 
+    let screen_scale = ui_state.screen_scale;
     let mut new_exception = ui_state.new_exception;
 
     drop(ui_state);
 
+    let scale = screen_scale * zoom;
     let mut new_events : VecDeque<CelEvent> = VecDeque::new();
 
-    let scroll_height = ui.available_height() - 30.0;
+    let scroll_height = ui.available_height() - 30.0 * scale;
 
     egui::ScrollArea::vertical()
     .auto_shrink(true)
@@ -995,34 +1018,34 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     .show(ui, |ui| {
         egui::Grid::new("toggles_grid")
             .num_columns(2)
-            .spacing([40.0, 4.0])
+            .spacing(egui::vec2(40.0, 4.0) * scale)
             .striped(true)
             .show(ui, |ui| {
-                ui.label("Comparison Autosave");
+                ui.label(RichText::new("Comparison Autosave").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if toggle_switch(ui, &mut autosave).clicked() {
+                    if toggle_switch(ui, &mut autosave, scale).clicked() {
                         let new = autosave;
                         new_events.push_back(CelEvent::ChangeAutosave { new });
                     }
                 });
                 ui.end_row();
 
-                ui.label("Reset Recording on Start");
+                ui.label(RichText::new("Reset Recording on Start").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let new = autoreset;
-                    if toggle_switch(ui, &mut autoreset).clicked() {
+                    if toggle_switch(ui, &mut autoreset, scale).clicked() {
                         new_events.push_back(CelEvent::ChangeAutoReset { new });
                     }
                 });
                 ui.end_row();
 
-                ui.label("UI Scale");
+                ui.label(RichText::new("UI Scale").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.5..=8.0));
                 });
                 ui.end_row();
 
-                ui.label("Start Trigger Size");
+                ui.label(RichText::new("Start Trigger Size").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(egui::DragValue::new(&mut trigger_sizes[0][2]).speed(0.1).clamp_range(0.1..=10.0));
                     ui.add(egui::DragValue::new(&mut trigger_sizes[0][1]).speed(0.1).clamp_range(0.1..=10.0));
@@ -1030,7 +1053,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("End Trigger Size");
+                ui.label(RichText::new("End Trigger Size").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(egui::DragValue::new(&mut trigger_sizes[1][2]).speed(0.1).clamp_range(0.1..=10.0));
                     ui.add(egui::DragValue::new(&mut trigger_sizes[1][1]).speed(0.1).clamp_range(0.1..=10.0));
@@ -1038,27 +1061,27 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Timer Size");
+                ui.label(RichText::new("Timer Size").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(egui::DragValue::new(&mut timer_size).speed(0.5).clamp_range(6.9..=69.0));
                 });
                 ui.end_row();
             });
 
-        ui.add_space(20.0);
-        ui.heading("Keybinds");
+        ui.add_space(20.0 * scale);
+        ui.heading(RichText::new("Keybinds").size(FONT_SIZE * scale));
         ui.separator();
 
         egui::Grid::new("config_grid")
             .num_columns(2)
-            .spacing([40.0, 4.0])
+            .spacing(egui::vec2(40.0, 4.0) * scale)
             .striped(true)
             .show(ui, |ui| {
                 if direct_mode {
-                    ui.label("Start Recording");
+                    ui.label(RichText::new("Start Recording").size(FONT_SIZE * scale));
                 }
                 else {
-                    ui.label("Spawn Start Trigger");
+                    ui.label(RichText::new("Spawn Start Trigger").size(FONT_SIZE * scale));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut start_keybind, "start_keybind"));
@@ -1066,50 +1089,50 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 ui.end_row();
 
                 if direct_mode {
-                    ui.label("Stop Recording");
+                    ui.label(RichText::new("Stop Recording").size(FONT_SIZE * scale));
                 }
                 else {
-                    ui.label("Spawn End Trigger");
+                    ui.label(RichText::new("Spawn End Trigger").size(FONT_SIZE * scale));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut stop_keybind, "stop_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Reset Recording");
+                ui.label(RichText::new("Reset Recording").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut reset_keybind, "reset_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Delete Triggers");
+                ui.label(RichText::new("Delete Triggers").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut clear_keybind, "clear_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Teleport to Start & End Trigger");
+                ui.label(RichText::new("Teleport to Start & End Trigger").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut teleport_keybinds[1], "teleport_end_keybind"));
                     ui.add(Keybind::new(&mut teleport_keybinds[0], "teleport_start_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Teleport to Location 1 & 2");
+                ui.label(RichText::new("Teleport to Location 1 & 2").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut extra_teleport_keybinds[1], "teleport_2_keybind"));
                     ui.add(Keybind::new(&mut extra_teleport_keybinds[0], "teleport_1_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Set Location 1 & 2");
+                ui.label(RichText::new("Set Location 1 & 2").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
                     ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
                 });
                 ui.end_row();
 
-                ui.label("Delete Location 1 & 2");
+                ui.label(RichText::new("Delete Location 1 & 2").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Keybind::new(&mut delete_teleport_keybinds[1], "delete_teleport_2_keybind"));
                     ui.add(Keybind::new(&mut delete_teleport_keybinds[0], "delete_teleport_1_keybind"));
@@ -1124,7 +1147,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             });
 
         ui.add_space(20.0);
-        ui.heading("Colors");
+        ui.heading(RichText::new("Colors").size(FONT_SIZE * scale));
         ui.separator();
 
         egui::Grid::new("colors_grid")
@@ -1132,10 +1155,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             .spacing([40.0, 4.0])
             .striped(true)
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Path Rendering").size(15.0));
+                ui.label(RichText::new("Path Rendering").size(15.0 * scale));
                 ui.end_row();
 
-                ui.label("Start Trigger");
+                ui.label(RichText::new("Start Trigger").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = trigger_colors[0].as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1144,7 +1167,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("End Trigger");
+                ui.label(RichText::new("End Trigger").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = trigger_colors[1].as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1153,7 +1176,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Path Gradient: Fast");
+                ui.label(RichText::new("Path Gradient: Fast").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = fast_color.as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1162,7 +1185,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Path Gradient: Slow");
+                ui.label(RichText::new("Path Gradient: Slow").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = slow_color.as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1171,7 +1194,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Fastest Path");
+                ui.label(RichText::new("Fastest Path").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = gold_color.as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1180,7 +1203,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Selected Path");
+                ui.label(RichText::new("Selected Path").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = select_color.as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1190,10 +1213,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 ui.end_row();
 
                 ui.end_row();
-                ui.label(egui::RichText::new("UI").size(15.0));
+                ui.label(egui::RichText::new("UI").size(15.0 * scale));
                 ui.end_row();
 
-                ui.label("Accent 1");
+                ui.label(RichText::new("Accent 1").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = accent_colors[0].as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1202,7 +1225,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 });
                 ui.end_row();
 
-                ui.label("Accent 2");
+                ui.label(RichText::new("Accent 2").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut tmp_color = accent_colors[1].as_hsva();
                     if ui.color_edit_button_hsva(&mut tmp_color).changed() {
@@ -1212,18 +1235,18 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                 ui.end_row();
             });
 
-        ui.add_space(20.0);
-        ui.heading("Input Suppression");
+        ui.add_space(20.0 * scale);
+        ui.heading(RichText::new("Input Suppression").size(FONT_SIZE * scale));
         ui.separator();
 
         egui::Grid::new("suppression_grid")
             .num_columns(2)
-            .spacing([40.0, 4.0])
+            .spacing(egui::vec2(40.0, 4.0) * scale)
             .striped(true)
             .show(ui, |ui| {
-                ui.label("Enable Input Suppression");
+                ui.label(RichText::new("Enable Input Suppression").size(FONT_SIZE * scale));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    toggle_switch(ui, &mut input_suppression);
+                    toggle_switch(ui, &mut input_suppression, scale);
                 });
                 ui.end_row();
 
@@ -1233,15 +1256,15 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                     let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
                     let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-                    let mut button_text = "New Exception";
+                    let mut button_text = RichText::new("New Exception");
 
                     if new_exception {
                         ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
                         ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
-                        button_text = "press key...";
+                        button_text = RichText::new("press key...");
                     }
 
-                    if ui.add(egui::Button::new(button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                    if ui.add(egui::Button::new(button_text.size(FONT_SIZE * scale)).min_size(egui::vec2(19.0, 19.0))).clicked() {
                         new_exception = true;
                     }
 
@@ -1257,7 +1280,7 @@ fn draw_config_tab(ui: &mut egui::Ui) {
                     for key in input_suppression_exceptions {
                         ui.label(key.format(&egui::ModifierNames::NAMES, false));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let button_text = "\u{1F5D9}";
+                            let button_text = RichText::new("\u{1F5D9}").size(FONT_SIZE * scale);
                             if ui.add(egui::Button::new(button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
                                 new_events.push_back(CelEvent::RemoveException { key });
                             }
@@ -1271,10 +1294,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     ui.separator();
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-        if ui.add(egui::Button::new("Save")).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Save").size(FONT_SIZE * scale))).clicked() {
             new_events.push_back(CelEvent::SaveConfig);
         }
-        if ui.add(egui::Button::new("Load")).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Load").size(FONT_SIZE * scale))).clicked() {
             new_events.push_back(CelEvent::LoadConfig);
         }
     });
@@ -1330,45 +1353,49 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 fn draw_credits_tab(ui: &mut egui::Ui) {
     if UI_STATE.lock().unwrap().tab != Tab::Credits { return; }
 
-    ui.set_min_width(300.0);
-    // ui.separator();
+    let screen_scale = UI_STATE.lock().unwrap().screen_scale;
+    let zoom = CONFIG_STATE.lock().unwrap().zoom;
+
+    let scale = screen_scale * zoom;
+
+    ui.set_min_width(300.0 * scale);
 
     egui::Grid::new("credits_grid")
         .num_columns(2)
-        .spacing([40.0, 4.0])
+        .spacing(egui::vec2(40.0, 4.0) * scale)
         .striped(true)
         .show(ui, |ui| {
-            ui.hyperlink_to("Hellbufl", "https://github.com/Hellbufl");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Author"); });
+            ui.hyperlink_to(RichText::new("Hellbufl").size(FONT_SIZE * scale), "https://github.com/Hellbufl");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("Author").size(FONT_SIZE * scale)); });
             ui.end_row();
 
-            ui.hyperlink_to("Woeful_Wolf", "https://github.com/WoefulWolf");
+            ui.hyperlink_to(RichText::new("Woeful_Wolf").size(FONT_SIZE * scale), "https://github.com/WoefulWolf");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                ui.label("modules");
-                ui.hyperlink_to("UI", "https://github.com/WoefulWolf/egui-directx");
-                ui.label("and");
-                ui.hyperlink_to("Graphics", "https://github.com/WoefulWolf/pintar");
-                ui.label(", ");
-                ui.hyperlink_to("Hooking", "https://github.com/WoefulWolf/ocular-rs");
-                ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0);
+                ui.label(RichText::new("modules").size(FONT_SIZE * scale));
+                ui.hyperlink_to(RichText::new("UI").size(FONT_SIZE * scale), "https://github.com/WoefulWolf/egui-directx");
+                ui.label(RichText::new("and").size(FONT_SIZE * scale));
+                ui.hyperlink_to(RichText::new("Graphics").size(FONT_SIZE * scale), "https://github.com/WoefulWolf/pintar");
+                ui.label(RichText::new(", ").size(FONT_SIZE * scale));
+                ui.hyperlink_to(RichText::new("Hooking").size(FONT_SIZE * scale), "https://github.com/WoefulWolf/ocular-rs");
+                ui.spacing_mut().item_spacing = egui::vec2(15.0, 3.0) * scale;
             });
             ui.end_row();
 
-            ui.hyperlink_to("Vluurie", "https://github.com/Vluurie");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Programming Support"); });
+            ui.hyperlink_to(RichText::new("Vluurie").size(FONT_SIZE * scale), "https://github.com/Vluurie");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("Programming Support").size(FONT_SIZE * scale)); });
             ui.end_row();
 
-            ui.hyperlink_to("Aloyark", "https://www.twitch.tv/aloyarkk");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
+            ui.hyperlink_to(RichText::new("Aloyark").size(FONT_SIZE * scale), "https://www.twitch.tv/aloyarkk");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("Testing & Feedback").size(FONT_SIZE * scale)); });
             ui.end_row();
 
-            ui.hyperlink_to("Icarus", "https://www.twitch.tv/icarus_042");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
+            ui.hyperlink_to(RichText::new("Icarus").size(FONT_SIZE * scale), "https://www.twitch.tv/icarus_042");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("Testing & Feedback").size(FONT_SIZE * scale)); });
             ui.end_row();
 
-            ui.hyperlink_to("Percy", "https://www.twitch.tv/percyz01");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label("Testing & Feedback"); });
+            ui.hyperlink_to(RichText::new("Percy").size(FONT_SIZE * scale), "https://www.twitch.tv/percyz01");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("Testing & Feedback").size(FONT_SIZE * scale)); });
             ui.end_row();
         });
 }
@@ -1583,8 +1610,8 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
     ui_state.custom_shapes = custom_shapes;
 }
 
-fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
-    let desired_size = ui.spacing().interact_size.y * egui::vec2(2.0, 1.0);
+fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, scale: f32) -> egui::Response {
+    let desired_size = ui.spacing().interact_size.y * egui::vec2(2.0, 1.0) * scale;
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
     if response.clicked() {
         *on = !*on;

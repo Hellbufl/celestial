@@ -140,13 +140,21 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
     let mut sd: DXGI_SWAP_CHAIN_DESC = std::mem::zeroed();
     let _ = this.GetDesc(&mut sd);
 
+    let mut screen_scale = 1.;
+
     if let Ok(mut dims) = SCREEN_DIMENSIONS.lock() {
         let mut client_rect = RECT::default();
         if unsafe { GetClientRect(sd.OutputWindow, &mut client_rect).is_ok() } {
             dims.window_size.0 = (client_rect.right - client_rect.left) as u32;
             dims.window_size.1 = (client_rect.bottom - client_rect.top) as u32;
         }
+        // screen_scale = dims.render_size.0 as f32 / dims.window_size.0 as f32;
+        screen_scale = dims.window_size.0 as f32 / 1920.;
     }
+
+    if !screen_scale.is_finite() { screen_scale = 1. }
+    if screen_scale < 1. { screen_scale = 1. }
+    UI_STATE.lock().unwrap().screen_scale = screen_scale;
 
     if PINTAR.is_none() {
         let mut pintar = Pintar::init(&this, 0);
@@ -424,7 +432,7 @@ extern "system" fn hk_keyboard_get_device_state(this: *mut c_void, param0: u32, 
                 std::ptr::write_bytes((param1 as usize + (dinput_key & 0xFF) as usize) as *mut c_void, keys_pressed[(dinput_key & 0xFF) as usize], 1);
             }
         }
-        
+
         return HRESULT(1)
     }
 }
