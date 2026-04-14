@@ -387,14 +387,14 @@ impl PathLog {
     }
 
 	// pub fn insert(&mut self, new_path: &Path, collection_id: Uuid) {
-    //     if let Some(collection) = self.path_collections.iter_mut().find(|coll| coll.id() == collection_id) {
+    //     if let Some(collection) = self.path_collections.iter_mut().find(|collection| collection.id() == collection_id) {
     //         collection.add(new_path.clone(), self.filters.get(&collection_id));
     //     }
     //     else { error!("Collection-ID '{collection_id}' does not exist!") }
     // }
 
     // pub fn remove(&mut self, path_id: Uuid, collection_id: Uuid) {
-    //     if let Some(index) = self.path_collections.iter().position(|coll| coll.id() == collection_id) {
+    //     if let Some(index) = self.path_collections.iter().position(|collection| collection.id() == collection_id) {
     //         self.path_collections[index].remove(path_id);
     //         self.update_visible();
     //     }
@@ -446,8 +446,26 @@ impl PathLog {
         }
     }
 
+    pub fn move_collection(&mut self, collection_id: Uuid, direction: usize, to_end: bool) {
+        if let Some(index) = self.path_collections.iter().position(|collection| collection.id() == collection_id) {
+            if !to_end {
+                let other = (index as i32 + (direction as i32 * 2 - 1)) as usize;
+                if other < self.path_collections.len() {
+                    self.path_collections.swap(index, other);
+                }
+                return;
+            }
+
+            let collection = self.path_collections[index].clone();
+            self.path_collections.remove(index);
+
+            let new_index = (self.path_collections.len() + 1 - direction) % (self.path_collections.len() + 1);
+            self.path_collections.insert(new_index, collection);
+        }
+    }
+
     pub fn delete_collection(&mut self, collection_id: Uuid) {
-        if let Some(index) = self.path_collections.iter().position(|coll| coll.id() == collection_id) {
+        if let Some(index) = self.path_collections.iter().position(|collection| collection.id() == collection_id) {
             for path_id in self.path_collections[index].paths() {
                 self.mute_paths.remove(&path_id);
                 self.solo_paths.remove(&path_id);

@@ -1,11 +1,7 @@
 ### Todo
 
-- clear and delete teleports shortcut
-- 1.01 support (wip)
-
-- configurable input supression
+- scaling
 - move paths between collections
-- move collections
 - migrate to newest egui version
 
 - get some cool screenshots for the github
@@ -20,6 +16,7 @@
 
 ### Planned Features
 
+- 1.01 support (wip)
 - save timer position
 - scale ui by window resolution
 - popup messages

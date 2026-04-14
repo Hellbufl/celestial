@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::Devices::HumanInterfaceDevice::{
     DirectInput8Create,
     IDirectInput8A, IDirectInputDevice8A,
-    GUID_SysMouse, GUID_SysKeyboard, DIKEYBOARD_W, DIKEYBOARD_A, DIKEYBOARD_S, DIKEYBOARD_D, DIKEYBOARD_SPACE, DIKEYBOARD_ESCAPE, DIKEYBOARD_UP, DIKEYBOARD_DOWN, DIKEYBOARD_LEFT, DIKEYBOARD_RIGHT, DIKEYBOARD_RETURN,
+    GUID_SysMouse, GUID_SysKeyboard,
 };
 use windows::core::ComInterface;
 use windows::core::Interface;
@@ -56,6 +56,8 @@ use config::*;
 use ocular;
 use pintar::Pintar;
 
+use crate::gamedata::DINPUT_KEYS;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScreenDimensions {
     pub render_size: (u32, u32),
@@ -68,7 +70,7 @@ static SCREEN_DIMENSIONS: Lazy<Mutex<ScreenDimensions>> = Lazy::new(|| Mutex::ne
 
 pub static PATHLOG: Lazy<Mutex<PathLog>> = Lazy::new(|| Mutex::new(PathLog::init()));
 pub static CONFIG_STATE: Lazy<Mutex<ConfigState>> = Lazy::new(|| Mutex::new(ConfigState::init()));
-pub static UISTATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init()));
+pub static UI_STATE: Lazy<Mutex<UIState>> = Lazy::new(|| Mutex::new(UIState::init()));
 pub static EVENTS: Lazy<Mutex<VecDeque<CelEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 pub static RENDER_UPDATES: Lazy<Mutex<RenderUpdates>> = Lazy::new(|| Mutex::new(RenderUpdates::new()));
 
@@ -166,7 +168,7 @@ unsafe fn init_globals(this: &IDXGISwapChain) {
     }
 
     if INPUT_MANAGER.is_none() {
-        OLD_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(sd.OutputWindow, GWLP_WNDPROC, new_wndproc as usize as _)));
+        OLD_WNDPROC = Some(std::mem::transmute(SetWindowLongPtrA(sd.OutputWindow, GWLP_WNDPROC, new_wndproc as *const () as usize as _)));
         INPUT_MANAGER = Some(InputManager::new(sd.OutputWindow));
     }
 }
@@ -252,7 +254,8 @@ extern "system" fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u
 
                     egui::Window::new("Celestial")
                         .default_size(egui::vec2(300f32, 300f32))
-                        .vscroll(true)
+                        .hscroll(false)
+                        .vscroll(false)
                         .resizable(true)
                         .min_size([300.0, 300.0])
                         .frame(egui::Frame::window(&ctx.style()).inner_margin(7.0))
@@ -394,6 +397,13 @@ extern "system" fn hk_mouse_get_device_state(this: *mut c_void, param0: u32, par
 }
 
 extern "system" fn hk_keyboard_get_device_state(this: *mut c_void, param0: u32, param1: *mut c_void) -> HRESULT {
+    let config = CONFIG_STATE.lock().unwrap();
+
+    let input_suppression = config.input_suppression;
+    let input_suppression_exceptions = config.input_suppression_exceptions.clone();
+
+    drop(config);
+
     unsafe {
         if EGUI_WANTS_KEYBOARD_INPUT {
             let _res = KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1);
@@ -405,24 +415,17 @@ extern "system" fn hk_keyboard_get_device_state(this: *mut c_void, param0: u32, 
 
         let keys_pressed: [u8; 256] = std::ptr::read((param1) as *const _);
 
-        std::ptr::write_bytes(param1, 0, param0 as usize);
+        if input_suppression {
+            std::ptr::write_bytes(param1, 0, param0 as usize);
+        }
 
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_SPACE & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_SPACE & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_W & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_W & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_A & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_A & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_S & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_S & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_D & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_D & 0xFF) as usize], 1);
-
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_UP & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_UP & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_DOWN & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_DOWN & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_LEFT & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_LEFT & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_RIGHT & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_RIGHT & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_RETURN & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_RETURN & 0xFF) as usize], 1);
-        std::ptr::write_bytes((param1 as usize + (DIKEYBOARD_ESCAPE & 0xFF) as usize) as *mut c_void, keys_pressed[(DIKEYBOARD_ESCAPE & 0xFF) as usize], 1);
-
+        for key in input_suppression_exceptions {
+            if let Some(dinput_key) = DINPUT_KEYS.get(&key) {
+                std::ptr::write_bytes((param1 as usize + (dinput_key & 0xFF) as usize) as *mut c_void, keys_pressed[(dinput_key & 0xFF) as usize], 1);
+            }
+        }
+        
         return HRESULT(1)
-
-        // KEYBOARD_GET_DEVICE_STATE_HOOK.call(this, param0, param1)
     }
 }
 

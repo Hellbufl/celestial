@@ -1,14 +1,16 @@
 use std::collections::VecDeque;
+use std::f32;
 use std::f32::consts::PI;
 use std::fmt::Debug;
 use egui::epaint::Hsva;
-use egui::{Color32, Modifiers, RichText};
+use egui::scroll_area::ScrollBarVisibility;
+use egui::{Color32, RichText};
 use uuid::Uuid;
-use egui_keybind::Keybind;
+use egui_keybind::{Bind, Keybind};
 
 use crate::config::{AsColor32, AsHsva, CompareKeybindToEvent};
 use crate::pathdata::HighPassFilter;
-use crate::{gamedata, pathlog, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, UISTATE};
+use crate::{CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, RX, RenderUpdates, UI_STATE, gamedata, pathlog};
 use crate::events::CelEvent;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -69,6 +71,7 @@ pub struct UIState {
     tab: Tab,
     pub modifier: u8,
     delete_mode: bool,
+    new_exception: bool,
     renaming_collection: Option<Uuid>,
     renaming_name: String,
     pub main_teleports: [ Option<Teleport>; 2 ],
@@ -86,6 +89,7 @@ impl UIState {
             tab: Tab::Comparison,
             modifier: 0,
             delete_mode: false,
+            new_exception: false,
             renaming_collection: None,
             renaming_name: "".to_string(),
             main_teleports: [None; 2],
@@ -110,8 +114,11 @@ pub fn check_input(input: &egui::RawInput) {
 
     let extra_teleport_keybinds = config.extra_teleport_keybinds;
     let spawn_teleport_keybinds = config.spawn_teleport_keybinds;
+    let delete_teleport_keybinds = config.delete_teleport_keybinds;
 
     drop(config);
+
+    let mut new_exception = UI_STATE.lock().unwrap().new_exception;
 
     let mut new_events : VecDeque<CelEvent> = VecDeque::new();
 
@@ -126,6 +133,14 @@ pub fn check_input(input: &egui::RawInput) {
     }
 
     for input_event in &input.events {
+        if new_exception {
+            if let egui::Event::Key{key, physical_key: _, pressed: _, repeat: _, modifiers: _} = input_event  {
+                new_events.push_back(CelEvent::NewException { key: *key });
+                new_exception = false;
+                continue;
+            }
+        }
+
         if start_keybind.compare_to_event(input_event) {
             if direct_mode {
                 new_events.push_back(CelEvent::StartRecording);
@@ -166,25 +181,23 @@ pub fn check_input(input: &egui::RawInput) {
             new_events.push_back(CelEvent::Teleport { index: TeleportIndex::Main { i: 1 } });
         }
 
-        for i in 0..10 {
+        for i in 0..2 {
             if extra_teleport_keybinds[i].compare_to_event(input_event) {
                 new_events.push_back(CelEvent::Teleport { index: TeleportIndex::Extra { i } });
             }
         }
 
-        for i in 0..10 {
+        for i in 0..2 {
             if spawn_teleport_keybinds[i].compare_to_event(input_event) {
                 new_events.push_back(CelEvent::SpawnTeleport { index: TeleportIndex::Extra { i } });
             }
         }
 
-        // if spawn_teleport_keybinds[0].compare_to_event(e) {
-        //     new_events.push_back(CelEvent::SpawnTeleport { index: 0 });
-        // }
-
-        // if spawn_teleport_keybinds[1].compare_to_event(e) {
-        //     new_events.push_back(CelEvent::SpawnTeleport { index: 1 });
-        // }
+        for i in 0..2 {
+            if delete_teleport_keybinds[i].compare_to_event(input_event) {
+                new_events.push_back(CelEvent::DeleteTeleport { index: TeleportIndex::Extra { i } });
+            }
+        }
 
         // if config.spawn_checkpoint_keybind.compare_to_event(e) {
         //     egui.new_events.push_back(CelEvent::SpawnTrigger {
@@ -196,9 +209,10 @@ pub fn check_input(input: &egui::RawInput) {
         // }
     }
 
-    let mut ui_state = UISTATE.lock().unwrap();
+    let mut ui_state = UI_STATE.lock().unwrap();
 
     ui_state.modifier = modifier;
+    ui_state.new_exception = new_exception;
 
     drop(ui_state);
 
@@ -221,7 +235,7 @@ pub fn draw_ui(ui: &mut egui::Ui) {
 
     drop(config);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let mut tab = ui_state.tab;
 
@@ -242,11 +256,13 @@ pub fn draw_ui(ui: &mut egui::Ui) {
         ui.selectable_value(&mut tab, Tab::Credits, egui::RichText::new("Credits").strong());
     });
 
-    UISTATE.lock().unwrap().tab = tab;
+    UI_STATE.lock().unwrap().tab = tab;
 
     // ui.separator();
 
     ui.spacing_mut().item_spacing = egui::vec2(10.0, 3.0);
+
+    ui.separator();
 
     draw_comparison_tab(ui);
 
@@ -271,7 +287,7 @@ pub fn draw_timer(ui: &mut egui::Ui) {
 }
 
 fn draw_comparison_tab(ui: &mut egui::Ui) {
-    if UISTATE.lock().unwrap().tab != Tab::Comparison { return; }
+    if UI_STATE.lock().unwrap().tab != Tab::Comparison { return; }
 
     let pathlog = PATHLOG.lock().unwrap();
 
@@ -287,7 +303,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let mut renaming_collection = ui_state.renaming_collection;
     let mut renaming_name = ui_state.renaming_name.clone();
@@ -300,7 +316,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
     let mut solo_toggles : Vec<Uuid> = Vec::new();
     let mut to_clear : Vec<Uuid> = Vec::new();
 
-    ui.separator();
+    // ui.separator();
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
         egui::ComboBox::new("comp_mode_drop_down", "Comparison Mode")
@@ -314,156 +330,182 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    if ui.interact_bg(egui::Sense::click()).clicked() {
-        renaming_collection = None;
-    }
+    let scroll_height = ui.available_height() - 30.0;
 
-    for i in 0..path_collections_len {
-        let pathlog = PATHLOG.lock().unwrap();
-
-        let collection_name = pathlog.collections()[i].name.clone();
-        let collection_id = pathlog.collections()[i].id();
-        let collection_len = pathlog.collections()[i].paths().len();
-        let mute = *pathlog.mute_collections.get(&collection_id).unwrap();
-        let solo = *pathlog.solo_collections.get(&collection_id).unwrap();
-        let high_pass = pathlog.filters.get(&collection_id).cloned();
-
-        drop(pathlog);
-
-        egui::Grid::new(collection_id.to_string() + "buttons")
-        .num_columns(2)
-        .spacing([40.0, 4.0])
-        .striped(true)
+    egui::ScrollArea::vertical()
+        .auto_shrink(true)
+        .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+        .max_height(scroll_height)
         .show(ui, |ui| {
-            // if ui.interact_bg(egui::Sense::click()).clicked() {
-            //     state.ui_state.renaming_collection = None;
-            // }
-            let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
-            let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+            if ui.interact_bg(egui::Sense::click()).clicked() {
+                renaming_collection = None;
+            }
 
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                let mut arm_button_text = egui::RichText::new("\u{2B55}");
-                if active_collection == Some(collection_id) {
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[1].gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[1];
-                    arm_button_text = arm_button_text.strong();
-                }
+            for i in 0..path_collections_len {
+                let pathlog = PATHLOG.lock().unwrap();
 
-                if ui.add(
-                    egui::Button::new(arm_button_text)
-                        .min_size(egui::vec2(19.0, 19.0))
-                        .rounding(egui::Rounding::same(10.0))
-                    ).clicked() {
-                    new_events.push_back(CelEvent::ToggleActive { id: collection_id });
-                }
+                let collection_name = pathlog.collections()[i].name.clone();
+                let collection_id = pathlog.collections()[i].id();
+                let collection_len = pathlog.collections()[i].paths().len();
+                let mute = *pathlog.mute_collections.get(&collection_id).unwrap();
+                let solo = *pathlog.solo_collections.get(&collection_id).unwrap();
+                let high_pass = pathlog.filters.get(&collection_id).cloned();
 
-                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                drop(pathlog);
 
-                if renaming_collection == Some(collection_id) {
-                    let response = ui.add(egui::TextEdit::singleline(&mut renaming_name).desired_width(200.0));
-                    if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        let new_name = renaming_name.clone();
-                        new_events.push_back(CelEvent::RenameCollection { id: collection_id, new_name });
-                        renaming_collection = None;
-                    }
-                }
-                else if ui.label(collection_name.clone()).clicked() {
-                    renaming_collection = Some(collection_id);
-                    renaming_name = collection_name.clone();
-                }
-            });
+                egui::Grid::new(collection_id.to_string() + "buttons")
+                .num_columns(2)
+                .spacing([40.0, 4.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    // if ui.interact_bg(egui::Sense::click()).clicked() {
+                    //     state.ui_state.renaming_collection = None;
+                    // }
+                    let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                    let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if delete_mode {
-                    if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
-                        new_events.push_back(CelEvent::DeleteCollection { id: collection_id });
-                    }
-                }
-
-                let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
-
-                if solo {
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
-                    solo_button_text = solo_button_text.strong();
-                }
-
-                if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    solo_toggles.push(collection_id);
-                }
-
-                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-
-                let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
-                if mute {
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
-                    mute_button_text = mute_button_text.strong();
-                }
-
-                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    mute_toggles.push(collection_id);
-                }
-
-                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-
-                let mut mute_button_text = egui::RichText::new("\u{2B06}");
-                if let Some(HighPassFilter::Gold) = high_pass {
-                    ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
-                    mute_button_text = mute_button_text.strong();
-                }
-
-                if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
-                    new_events.push_back(CelEvent::ToggleGoldFilter { collection_id });
-                }
-
-                ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
-            });
-            ui.end_row();
-        });
-
-        egui::CollapsingHeader::new("").id_source(collection_id.to_string() + "collapsing")
-            .show(ui, |ui| {
-                egui::Grid::new(collection_id.to_string() + "paths")
-                    .num_columns(2)
-                    .spacing([40.0, 4.0])
-                    .striped(false)
-                    .with_row_color(|i, _style| {
-                        // this is not pretty but I'm just glad it works for now
-                        let p_log = PATHLOG.lock().unwrap();
-
-                        if let Some(c_id) = p_log.active_collection {
-                            if let Some(coll) = &p_log.get_collection(c_id) {
-                                if i < coll.paths().len() && coll.paths()[i] == p_log.latest_path {
-                                    Some(egui::Color32::from_gray(42))
-                                    // Some(style.visuals.faint_bg_color)
-                                } else { None }
-                            } else { None }
-                        } else { None }
-                    })
-                    .show(ui, |ui| {
-                        if ui.interact_bg(egui::Sense::click()).clicked() {
-                            // state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
-                            renaming_collection = None;
-                            to_clear.push(collection_id);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                        let mut arm_button_text = egui::RichText::new("\u{2B55}");
+                        if active_collection == Some(collection_id) {
+                            ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[1].gamma_multiply(1.2);
+                            ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[1];
+                            arm_button_text = arm_button_text.strong();
                         }
 
-                        // for path in state.pathlog.path_collections[i].paths() {
-                        for p in 0..collection_len {
-                            draw_path(ui, p, i);
+                        if ui.add(
+                            egui::Button::new(arm_button_text)
+                                .min_size(egui::vec2(19.0, 19.0))
+                                .rounding(egui::Rounding::same(10.0))
+                            ).clicked() {
+                            new_events.push_back(CelEvent::ToggleActive { id: collection_id });
+                        }
+
+                        ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                        ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
+                        if renaming_collection == Some(collection_id) {
+                            let response = ui.add_sized([240.0, 19.0], egui::TextEdit::singleline(&mut renaming_name).char_limit(32));
+                            if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                let new_name = renaming_name.clone().trim().to_string();
+                                new_events.push_back(CelEvent::RenameCollection { id: collection_id, new_name });
+                                renaming_collection = None;
+                            }
+                        }
+                        else if ui.label(collection_name.clone()).clicked() {
+                            renaming_collection = Some(collection_id);
+                            renaming_name = collection_name.clone();
                         }
                     });
-            });
 
-        ui.separator();
-    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        if delete_mode {
+                            if ui.add(egui::Button::new("\u{1F5D9}").min_size(egui::vec2(19.0, 19.0))).clicked() {
+                                new_events.push_back(CelEvent::DeleteCollection { id: collection_id });
+                            }
 
-    egui::Grid::new("saveload+")
+                            let button_move_down = ui.add(egui::Button::new("\u{1F53B}").min_size(egui::vec2(19.0, 19.0)));
+                            let button_move_up = ui.add(egui::Button::new("\u{1F53A}").min_size(egui::vec2(19.0, 19.0)));
+
+                            if button_move_down.clicked_by(egui::PointerButton::Primary) {
+                                new_events.push_back(CelEvent::MoveCollection { id: collection_id, direction: 1, to_end: false });
+                            }
+                            if button_move_down.clicked_by(egui::PointerButton::Secondary) {
+                                new_events.push_back(CelEvent::MoveCollection { id: collection_id, direction: 1, to_end: true });
+                            }
+
+                            if button_move_up.clicked_by(egui::PointerButton::Primary) {
+                                new_events.push_back(CelEvent::MoveCollection { id: collection_id, direction: 0, to_end: false });
+                            }
+                            if button_move_up.clicked_by(egui::PointerButton::Secondary) {
+                                new_events.push_back(CelEvent::MoveCollection { id: collection_id, direction: 0, to_end: true });
+                            }
+                        }
+                        else {
+                            let mut solo_button_text = egui::RichText::new("\u{1F1F8}");
+
+                            if solo {
+                                ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                                solo_button_text = solo_button_text.strong();
+                            }
+
+                            if ui.add(egui::Button::new(solo_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                                solo_toggles.push(collection_id);
+                            }
+
+                            ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                            ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
+                            let mut mute_button_text = egui::RichText::new("\u{1F1F2}");
+                            if mute {
+                                ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                                mute_button_text = mute_button_text.strong();
+                            }
+
+                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                                mute_toggles.push(collection_id);
+                            }
+
+                            ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                            ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+
+                            let mut mute_button_text = egui::RichText::new("\u{2B06}");
+                            if let Some(HighPassFilter::Gold) = high_pass {
+                                ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                                mute_button_text = mute_button_text.strong();
+                            }
+
+                            if ui.add(egui::Button::new(mute_button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                                new_events.push_back(CelEvent::ToggleGoldFilter { collection_id });
+                            }
+
+                            ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                            ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                        }
+                    });
+                    ui.end_row();
+                });
+
+                egui::CollapsingHeader::new("").id_source(collection_id.to_string() + "collapsing")
+                    .show(ui, |ui| {
+                        egui::Grid::new(collection_id.to_string() + "paths")
+                            .num_columns(2)
+                            .spacing([40.0, 4.0])
+                            .striped(false)
+                            .with_row_color(|i, _style| {
+                                // this is not pretty but I'm just glad it works for now
+                                let p_log = PATHLOG.lock().unwrap();
+
+                                if let Some(c_id) = p_log.active_collection {
+                                    if let Some(coll) = &p_log.get_collection(c_id) {
+                                        if i < coll.paths().len() && coll.paths()[i] == p_log.latest_path {
+                                            Some(egui::Color32::from_gray(42))
+                                            // Some(style.visuals.faint_bg_color)
+                                        } else { None }
+                                    } else { None }
+                                } else { None }
+                            })
+                            .show(ui, |ui| {
+                                if ui.interact_bg(egui::Sense::click()).clicked() {
+                                    // state.ui_state.selected_paths.get_mut(&collection_id).unwrap().clear();
+                                    renaming_collection = None;
+                                    to_clear.push(collection_id);
+                                }
+
+                                // for path in state.pathlog.path_collections[i].paths() {
+                                for p in 0..collection_len {
+                                    draw_path(ui, p, i);
+                                }
+                            });
+                    });
+            }
+        });
+
+    ui.separator();
+
+    egui::Grid::new("saveload")
         .num_columns(2)
         .spacing([40.0, 4.0])
         .striped(true)
@@ -519,7 +561,7 @@ fn draw_comparison_tab(ui: &mut egui::Ui) {
 
     drop(pathlog);
 
-    let mut ui_state = UISTATE.lock().unwrap();
+    let mut ui_state = UI_STATE.lock().unwrap();
 
     ui_state.renaming_collection = renaming_collection;
     ui_state.renaming_name = renaming_name;
@@ -561,7 +603,7 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
 
     drop(config);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let mods = ui_state.modifier;
     let delete_mode = ui_state.delete_mode;
@@ -623,8 +665,6 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
             ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::from_gray(42);
         }
 
-        // let time_response = ui.add(egui::Label::new(format!("{:02}:{:02}.{:03}", time / 60000, (time % 60000) / 1000, (time % 1000))).selectable(true));
-
         let time_text = egui::RichText::new(format!("{:02}:{:02}.{:03}", path_time / 60000, (path_time % 60000) / 1000, (path_time % 1000)));
 
         let time_response = ui.add(egui::Button::new(time_text).min_size(egui::vec2(80.0, 19.0)));
@@ -680,12 +720,12 @@ fn draw_path(ui: &mut egui::Ui, path: usize, collection: usize) {
         EVENTS.lock().unwrap().push_back(CelEvent::DeletePath { path_id });
     }
 
-    UISTATE.lock().unwrap().delete_mode = delete_mode;
+    UI_STATE.lock().unwrap().delete_mode = delete_mode;
     EVENTS.lock().unwrap().append(&mut new_events);
 }
 
 fn draw_triggers_tab(ui: &mut egui::Ui) {
-    if UISTATE.lock().unwrap().tab != Tab::Triggers { return; }
+    if UI_STATE.lock().unwrap().tab != Tab::Triggers { return; }
 
     let pathlog = PATHLOG.lock().unwrap();
 
@@ -693,7 +733,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     drop(pathlog);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let mut delete_mode = ui_state.delete_mode;
 
@@ -705,14 +745,20 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
-    ui.separator();
-
-    // let mut delete_list: Vec<Uuid> = Vec::new();
     let mut new_events: Vec<CelEvent> = Vec::new();
 
-    for t in 0..(checkpoint_triggers_len + 2) {
-        draw_trigger(ui, t, &mut new_events);
-    }
+    let scroll_height = ui.available_height() - 30.0;
+
+    egui::ScrollArea::vertical()
+        .auto_shrink(true)
+        .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+        .max_height(scroll_height)
+        .show(ui, |ui| {
+
+            for t in 0..(checkpoint_triggers_len + 2) {
+                draw_trigger(ui, t, &mut new_events);
+            }
+        });
 
     egui::Grid::new("util")
         .num_columns(2)
@@ -765,21 +811,6 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
             ui.end_row();
         });
 
-    // let mut pathlog = PATHLOG.lock().unwrap();
-
-    // for id in delete_list {
-    //     let pos = pathlog.checkpoint_triggers.iter().position(|t| t.id() == id);
-    //     if let Some(i) = pos { pathlog.checkpoint_triggers.remove(i); }
-
-    //     for t in 0..2 {
-    //         if let Some(trigger) = pathlog.main_triggers[t] {
-    //             if trigger.id() == id { pathlog.main_triggers[t] = None }
-    //         }
-    //     }
-    // }
-
-    // drop(pathlog);
-
     let mut events = EVENTS.lock().unwrap();
 
     for event in new_events {
@@ -788,7 +819,7 @@ fn draw_triggers_tab(ui: &mut egui::Ui) {
 
     drop(events);
 
-    let mut ui_state = UISTATE.lock().unwrap();
+    let mut ui_state = UI_STATE.lock().unwrap();
 
     ui_state.delete_mode = delete_mode;
 }
@@ -810,7 +841,7 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
 
     drop(pathlog);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let delete_mode = ui_state.delete_mode;
 
@@ -907,7 +938,7 @@ fn draw_trigger(ui: &mut egui::Ui, trigger_index: usize, new_events: &mut Vec<Ce
 }
 
 fn draw_config_tab(ui: &mut egui::Ui) {
-    if UISTATE.lock().unwrap().tab != Tab::Config { return; }
+    if UI_STATE.lock().unwrap().tab != Tab::Config { return; }
 
     let config = CONFIG_STATE.lock().unwrap();
 
@@ -922,12 +953,19 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     let mut reset_keybind = config.reset_keybind;
     let mut clear_keybind = config.clear_keybind;
     let mut teleport_keybinds = config.teleport_keybinds;
-    // let mut spawn_teleport_keybinds = config.spawn_teleport_keybinds;
-    let mut extra_teleport_modifiers = config.extra_teleport_modifiers;
-    let mut spawn_teleport_modifiers = config.spawn_teleport_modifiers;
+    // let mut extra_teleport_modifiers = config.extra_teleport_modifiers;
+    // let mut spawn_teleport_modifiers = config.spawn_teleport_modifiers;
+    // let mut delete_teleport_modifiers = config.delete_teleport_modifiers;
+    let mut extra_teleport_keybinds = config.extra_teleport_keybinds;
+    let mut spawn_teleport_keybinds = config.spawn_teleport_keybinds;
+    let mut delete_teleport_keybinds = config.delete_teleport_keybinds;
 
     let mut timer_size = config.timer_size;
     // let mut timer_position = config.timer_position;
+
+    let mut input_suppression = config.input_suppression;
+    let input_suppression_exceptions = config.input_suppression_exceptions.clone();
+
 	let mut trigger_colors = config.trigger_colors;
 	// let mut checkpoint_color = config.checkpoint_color;
     let mut fast_color = config.fast_color;
@@ -940,312 +978,295 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
+    let ui_state = UI_STATE.lock().unwrap();
+
+    let mut new_exception = ui_state.new_exception;
+
+    drop(ui_state);
+
     let mut new_events : VecDeque<CelEvent> = VecDeque::new();
 
-    ui.separator();
+    let scroll_height = ui.available_height() - 30.0;
 
-    ui.add_space(5.0);
-    egui::Grid::new("toggles_grid")
-        .num_columns(2)
-        .spacing([40.0, 4.0])
-        .striped(true)
-        .show(ui, |ui| {
-            // ui.label("Direct Recording Mode");
-            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            //     if toggle_switch(ui, &mut config.direct_mode).clicked() {
-            //         state.ui_state.events.push_back(CelEvent::ChangeDirectMode { new: config.direct_mode });
-            //     }
-            // });
-            // ui.end_row();
-
-            ui.label("Comparison Autosave");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if toggle_switch(ui, &mut autosave).clicked() {
-                    let new = autosave;
-                    new_events.push_back(CelEvent::ChangeAutosave { new });
-                }
-            });
-            ui.end_row();
-
-            ui.label("Reset Recording on Start");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let new = autoreset;
-                if toggle_switch(ui, &mut autoreset).clicked() {
-                    new_events.push_back(CelEvent::ChangeAutoReset { new });
-                }
-            });
-            ui.end_row();
-
-            ui.label("UI Scale");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.5..=8.0));
-            });
-            ui.end_row();
-
-            ui.label("Start Trigger Size");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut trigger_sizes[0][2]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut trigger_sizes[0][1]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut trigger_sizes[0][0]).speed(0.1).clamp_range(0.1..=10.0));
-            });
-            ui.end_row();
-
-            ui.label("End Trigger Size");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut trigger_sizes[1][2]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut trigger_sizes[1][1]).speed(0.1).clamp_range(0.1..=10.0));
-                ui.add(egui::DragValue::new(&mut trigger_sizes[1][0]).speed(0.1).clamp_range(0.1..=10.0));
-            });
-            ui.end_row();
-
-            ui.label("Timer Size");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::DragValue::new(&mut timer_size).speed(0.5).clamp_range(6.9..=69.0));
-            });
-            ui.end_row();
-        });
-
-    ui.add_space(20.0);
-    ui.heading("Keybinds");
-    ui.separator();
-
-    egui::Grid::new("config_grid")
-        .num_columns(2)
-        .spacing([40.0, 4.0])
-        .striped(true)
-        .show(ui, |ui| {
-            if direct_mode {
-                ui.label("Start Recording");
-            }
-            else {
-                ui.label("Spawn Start Trigger");
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut start_keybind, "start_keybind"));
-            });
-            ui.end_row();
-
-            if direct_mode {
-                ui.label("Stop Recording");
-            }
-            else {
-                ui.label("Spawn End Trigger");
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut stop_keybind, "stop_keybind"));
-            });
-            ui.end_row();
-
-            ui.label("Reset Recording");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut reset_keybind, "reset_keybind"));
-            });
-            ui.end_row();
-
-            ui.label("Delete Triggers");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut clear_keybind, "clear_keybind"));
-            });
-            ui.end_row();
-
-            ui.label("Teleport to Start Trigger");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut teleport_keybinds[0], "teleport_1_keybind"));
-            });
-            ui.end_row();
-
-            ui.label("Teleport to End Trigger");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Keybind::new(&mut teleport_keybinds[1], "teleport_2_keybind"));
-            });
-            ui.end_row();
-
-            ui.label("Teleport to Location 0-9");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // ui.checkbox(&mut extra_teleport_modifiers.ctrl, "Ctrl + <Number>");
-                // ui.checkbox(&mut extra_teleport_modifiers.shift, "Shift +");
-                // ui.checkbox(&mut extra_teleport_modifiers.alt, "Alt +");
-
-                #[derive(Debug, PartialEq)]
-                enum Mod {
-                    Alt,
-                    Shift,
-                    Ctrl,
-                }
-
-                let mut tmp_mod = if extra_teleport_modifiers.alt { Mod::Alt }
-                else if extra_teleport_modifiers.shift { Mod::Shift }
-                else { Mod::Ctrl };
-
-                egui::ComboBox::from_id_source("ModifierBox")
-                    .selected_text(format!("{tmp_mod:?} + <Num>"))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut tmp_mod, Mod::Alt, "Alt");
-                        ui.selectable_value(&mut tmp_mod, Mod::Shift, "Shift");
-                        ui.selectable_value(&mut tmp_mod, Mod::Ctrl, "More options soon...");
-                        // ui.selectable_value(&mut tmp_mod, Mod::Ctrl, "Ctrl");
-                    });
-
-                match tmp_mod {
-                    Mod::Alt => { extra_teleport_modifiers = Modifiers::ALT },
-                    Mod::Shift => { extra_teleport_modifiers = Modifiers::SHIFT },
-                    _ => {},
-                    // Mod::Ctrl => { extra_teleport_modifiers = Modifiers::CTRL },
-                }
-            });
-            ui.end_row();
-
-            ui.label("Set Teleport Location 0-9");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                #[derive(PartialEq)]
-                enum Mods {
-                    AltShift,
-                    AltCtrl,
-                    ShiftCtrl,
-                }
-
-                impl Debug for Mods {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        match self {
-                            Mods::AltShift => { write!(f, "Alt + Shift") },
-                            Mods::AltCtrl => { write!(f, "Alt + Ctrl") },
-                            Mods::ShiftCtrl => { write!(f, "Shift + Ctrl") },
-                        }
+    egui::ScrollArea::vertical()
+    .auto_shrink(true)
+    .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+    .max_height(scroll_height)
+    .show(ui, |ui| {
+        egui::Grid::new("toggles_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Comparison Autosave");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if toggle_switch(ui, &mut autosave).clicked() {
+                        let new = autosave;
+                        new_events.push_back(CelEvent::ChangeAutosave { new });
                     }
-                }
+                });
+                ui.end_row();
 
-                let mut tmp_mods = match spawn_teleport_modifiers {
-                    Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false } => { Mods::AltShift },
-                    Modifiers { alt: true, ctrl: true, shift: false, mac_cmd: false, command: false } => { Mods::AltCtrl },
-                    Modifiers { alt: false, ctrl: true, shift: true, mac_cmd: false, command: false } => { Mods::ShiftCtrl },
-                    _ => { panic!() },
-                };
+                ui.label("Reset Recording on Start");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let new = autoreset;
+                    if toggle_switch(ui, &mut autoreset).clicked() {
+                        new_events.push_back(CelEvent::ChangeAutoReset { new });
+                    }
+                });
+                ui.end_row();
 
-                egui::ComboBox::from_id_source("ModifiersBox")
-                    .selected_text(format!("{tmp_mods:?} + <Num>"))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut tmp_mods, Mods::AltShift, "Alt + Shift");
-                        ui.selectable_value(&mut tmp_mods, Mods::AltCtrl, "More options soon...");
-                        // ui.selectable_value(&mut tmp_mods, Mods::AltCtrl, "Alt + Ctrl");
-                        // ui.selectable_value(&mut tmp_mods, Mods::ShiftCtrl, "Shift + Ctrl");
-                    });
+                ui.label("UI Scale");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::DragValue::new(&mut zoom).speed(0.1).clamp_range(0.5..=8.0));
+                });
+                ui.end_row();
 
-                match tmp_mods {
-                    Mods::AltShift => { spawn_teleport_modifiers = Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false } },
-                    _ => {},
-                    // Mods::AltCtrl => { spawn_teleport_modifiers = Modifiers { alt: true, ctrl: true, shift: false, mac_cmd: false, command: false } },
-                    // Mods::ShiftCtrl => { spawn_teleport_modifiers = Modifiers { alt: false, ctrl: true, shift: true, mac_cmd: false, command: false } },
-                }
+                ui.label("Start Trigger Size");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[0][2]).speed(0.1).clamp_range(0.1..=10.0));
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[0][1]).speed(0.1).clamp_range(0.1..=10.0));
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[0][0]).speed(0.1).clamp_range(0.1..=10.0));
+                });
+                ui.end_row();
+
+                ui.label("End Trigger Size");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[1][2]).speed(0.1).clamp_range(0.1..=10.0));
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[1][1]).speed(0.1).clamp_range(0.1..=10.0));
+                    ui.add(egui::DragValue::new(&mut trigger_sizes[1][0]).speed(0.1).clamp_range(0.1..=10.0));
+                });
+                ui.end_row();
+
+                ui.label("Timer Size");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::DragValue::new(&mut timer_size).speed(0.5).clamp_range(6.9..=69.0));
+                });
+                ui.end_row();
             });
-            ui.end_row();
 
-            // ui.label("Set Teleport Location 1");
-            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            //     ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
-            // });
-            // ui.end_row();
+        ui.add_space(20.0);
+        ui.heading("Keybinds");
+        ui.separator();
 
-            // ui.label("Set Teleport Location 2");
-            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            //     ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
-            // });
-            // ui.end_row();
-
-            // ui.label("Spawn Checkpoint");
-            // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            //     ui.add(Keybind::new(&mut config.spawn_checkpoint_keybind, "spawn_checkpoint_keybind"));
-            // });
-            // ui.end_row();
-        });
-
-    ui.add_space(20.0);
-    ui.heading("Colors");
-    ui.separator();
-
-    egui::Grid::new("colors_grid")
-        .num_columns(2)
-        .spacing([40.0, 4.0])
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new("Path Rendering").size(15.0));
-            ui.end_row();
-
-            ui.label("Start Trigger");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = trigger_colors[0].as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    trigger_colors[0] = tmp_color.to_rgba_premultiplied();
+        egui::Grid::new("config_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                if direct_mode {
+                    ui.label("Start Recording");
                 }
-            });
-            ui.end_row();
-
-            ui.label("End Trigger");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = trigger_colors[1].as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    trigger_colors[1] = tmp_color.to_rgba_premultiplied();
+                else {
+                    ui.label("Spawn Start Trigger");
                 }
-            });
-            ui.end_row();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut start_keybind, "start_keybind"));
+                });
+                ui.end_row();
 
-            ui.label("Path Gradient: Fast");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = fast_color.as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    fast_color = tmp_color.to_rgba_premultiplied();
+                if direct_mode {
+                    ui.label("Stop Recording");
                 }
-            });
-            ui.end_row();
-
-            ui.label("Path Gradient: Slow");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = slow_color.as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    slow_color = tmp_color.to_rgba_premultiplied();
+                else {
+                    ui.label("Spawn End Trigger");
                 }
-            });
-            ui.end_row();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut stop_keybind, "stop_keybind"));
+                });
+                ui.end_row();
 
-            ui.label("Fastest Path");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = gold_color.as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    gold_color = tmp_color.to_rgba_premultiplied();
-                }
-            });
-            ui.end_row();
+                ui.label("Reset Recording");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut reset_keybind, "reset_keybind"));
+                });
+                ui.end_row();
 
-            ui.label("Selected Path");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = select_color.as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    select_color = tmp_color.to_rgba_premultiplied();
-                }
-            });
-            ui.end_row();
+                ui.label("Delete Triggers");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut clear_keybind, "clear_keybind"));
+                });
+                ui.end_row();
 
-            ui.end_row();
-            ui.label(egui::RichText::new("UI").size(15.0));
-            ui.end_row();
+                ui.label("Teleport to Start & End Trigger");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut teleport_keybinds[1], "teleport_end_keybind"));
+                    ui.add(Keybind::new(&mut teleport_keybinds[0], "teleport_start_keybind"));
+                });
+                ui.end_row();
 
-            ui.label("Accent 0");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = accent_colors[0].as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                    accent_colors[0] = tmp_color.as_color32();
-                }
-            });
-            ui.end_row();
+                ui.label("Teleport to Location 1 & 2");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut extra_teleport_keybinds[1], "teleport_2_keybind"));
+                    ui.add(Keybind::new(&mut extra_teleport_keybinds[0], "teleport_1_keybind"));
+                });
+                ui.end_row();
 
-            ui.label("Accent 1");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut tmp_color = accent_colors[1].as_hsva();
-                if ui.color_edit_button_hsva(&mut tmp_color).changed() {
-                   accent_colors[1] = tmp_color.as_color32();
-                }
+                ui.label("Set Location 1 & 2");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut spawn_teleport_keybinds[1], "spawn_teleport_2_keybind"));
+                    ui.add(Keybind::new(&mut spawn_teleport_keybinds[0], "spawn_teleport_1_keybind"));
+                });
+                ui.end_row();
+
+                ui.label("Delete Location 1 & 2");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(Keybind::new(&mut delete_teleport_keybinds[1], "delete_teleport_2_keybind"));
+                    ui.add(Keybind::new(&mut delete_teleport_keybinds[0], "delete_teleport_1_keybind"));
+                });
+                ui.end_row();
+
+                // ui.label("Spawn Checkpoint");
+                // ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                //     ui.add(Keybind::new(&mut config.spawn_checkpoint_keybind, "spawn_checkpoint_keybind"));
+                // });
+                // ui.end_row();
             });
-            ui.end_row();
-        });
+
+        ui.add_space(20.0);
+        ui.heading("Colors");
+        ui.separator();
+
+        egui::Grid::new("colors_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Path Rendering").size(15.0));
+                ui.end_row();
+
+                ui.label("Start Trigger");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = trigger_colors[0].as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        trigger_colors[0] = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("End Trigger");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = trigger_colors[1].as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        trigger_colors[1] = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Path Gradient: Fast");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = fast_color.as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        fast_color = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Path Gradient: Slow");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = slow_color.as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        slow_color = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Fastest Path");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = gold_color.as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        gold_color = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Selected Path");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = select_color.as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        select_color = tmp_color.to_rgba_premultiplied();
+                    }
+                });
+                ui.end_row();
+
+                ui.end_row();
+                ui.label(egui::RichText::new("UI").size(15.0));
+                ui.end_row();
+
+                ui.label("Accent 1");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = accent_colors[0].as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                        accent_colors[0] = tmp_color.as_color32();
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Accent 2");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut tmp_color = accent_colors[1].as_hsva();
+                    if ui.color_edit_button_hsva(&mut tmp_color).changed() {
+                    accent_colors[1] = tmp_color.as_color32();
+                    }
+                });
+                ui.end_row();
+            });
+
+        ui.add_space(20.0);
+        ui.heading("Input Suppression");
+        ui.separator();
+
+        egui::Grid::new("suppression_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Enable Input Suppression");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    toggle_switch(ui, &mut input_suppression);
+                });
+                ui.end_row();
+
+                // ui.scope(|ui| {
+                    // ui.set_enabled(input_suppression);
+
+                    let original_hovered_weak_bg_fill = ui.visuals_mut().widgets.hovered.weak_bg_fill;
+                    let original_inactive_weak_bg_fill = ui.visuals_mut().widgets.inactive.weak_bg_fill;
+
+                    let mut button_text = "New Exception";
+
+                    if new_exception {
+                        ui.visuals_mut().widgets.hovered.weak_bg_fill = accent_colors[0].gamma_multiply(1.2);
+                        ui.visuals_mut().widgets.inactive.weak_bg_fill = accent_colors[0];
+                        button_text = "press key...";
+                    }
+
+                    if ui.add(egui::Button::new(button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                        new_exception = true;
+                    }
+
+                    ui.visuals_mut().widgets.hovered.weak_bg_fill = original_hovered_weak_bg_fill;
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = original_inactive_weak_bg_fill;
+                // });
+
+                ui.end_row();
+
+                // ui.scope(|ui| {
+                //     ui.set_enabled(input_suppression);
+
+                    for key in input_suppression_exceptions {
+                        ui.label(key.format(&egui::ModifierNames::NAMES, false));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let button_text = "\u{1F5D9}";
+                            if ui.add(egui::Button::new(button_text).min_size(egui::vec2(19.0, 19.0))).clicked() {
+                                new_events.push_back(CelEvent::RemoveException { key });
+                            }
+                        });
+                        ui.end_row();
+                    }
+                // });
+            });
+    });
 
     ui.separator();
 
@@ -1257,6 +1278,8 @@ fn draw_config_tab(ui: &mut egui::Ui) {
             new_events.push_back(CelEvent::LoadConfig);
         }
     });
+
+    UI_STATE.lock().unwrap().new_exception = new_exception;
 
     let mut config = CONFIG_STATE.lock().unwrap();
 
@@ -1273,18 +1296,21 @@ fn draw_config_tab(ui: &mut egui::Ui) {
     config.teleport_keybinds = teleport_keybinds;
     // config.spawn_teleport_keybinds = spawn_teleport_keybinds;
 
-    if config.extra_teleport_modifiers != extra_teleport_modifiers {
-        config.extra_teleport_modifiers = extra_teleport_modifiers;
-        config.generate_extra_teleport_keybinds();
-    }
+    // if config.extra_teleport_modifiers != extra_teleport_modifiers {
+    //     config.extra_teleport_modifiers = extra_teleport_modifiers;
+    //     config.generate_extra_teleport_keybinds();
+    // }
 
-    if config.spawn_teleport_modifiers != spawn_teleport_modifiers {
-        config.spawn_teleport_modifiers = spawn_teleport_modifiers;
-        config.generate_spawn_teleport_keybinds();
-    }
+    // if config.spawn_teleport_modifiers != spawn_teleport_modifiers {
+    //     config.spawn_teleport_modifiers = spawn_teleport_modifiers;
+    //     config.generate_spawn_teleport_keybinds();
+    // }
 
     config.timer_size = timer_size;
     // config.timer_position = timer_position;
+
+    config.input_suppression = input_suppression;
+
 	config.trigger_colors = trigger_colors;
 	// config.checkpoint_color = checkpoint_color;
     config.fast_color = fast_color;
@@ -1302,10 +1328,10 @@ fn draw_config_tab(ui: &mut egui::Ui) {
 
 // fn draw_credits_tab(ui: &mut egui::Ui, state.ui_state: &mut UIState) {
 fn draw_credits_tab(ui: &mut egui::Ui) {
-    if UISTATE.lock().unwrap().tab != Tab::Credits { return; }
+    if UI_STATE.lock().unwrap().tab != Tab::Credits { return; }
 
     ui.set_min_width(300.0);
-    ui.separator();
+    // ui.separator();
 
     egui::Grid::new("credits_grid")
         .num_columns(2)
@@ -1348,7 +1374,7 @@ fn draw_credits_tab(ui: &mut egui::Ui) {
 }
 
 fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
-    if UISTATE.lock().unwrap().tab != Tab::CustomShapes { return; }
+    if UI_STATE.lock().unwrap().tab != Tab::CustomShapes { return; }
 
     let config = CONFIG_STATE.lock().unwrap();
 
@@ -1356,14 +1382,14 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
 
     drop(config);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let mut custom_shapes = ui_state.custom_shapes.clone();
     let mut delete_mode = ui_state.delete_mode;
 
     drop(ui_state);
 
-    ui.separator();
+    // ui.separator();
 
     let mut delete_list: Vec<Uuid> = Vec::new();
 
@@ -1551,7 +1577,7 @@ fn draw_custom_shapes_tab(ui: &mut egui::Ui) {
             ui.end_row();
         });
 
-    let mut ui_state = UISTATE.lock().unwrap();
+    let mut ui_state = UI_STATE.lock().unwrap();
 
     ui_state.delete_mode = delete_mode;
     ui_state.custom_shapes = custom_shapes;

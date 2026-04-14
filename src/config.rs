@@ -31,18 +31,18 @@ pub struct ConfigState {
 	pub reset_keybind: Shortcut,
 	pub clear_keybind: Shortcut,
 	pub teleport_keybinds: [Shortcut; 2],
-	// pub spawn_teleport_keybinds: [Shortcut; 2],
 	pub spawn_checkpoint_keybind: Shortcut,
 
-    pub extra_teleport_modifiers: Modifiers,
-    pub spawn_teleport_modifiers: Modifiers,
-
-	pub extra_teleport_keybinds: [Shortcut; 10],
-	pub spawn_teleport_keybinds: [Shortcut; 10],
+	pub extra_teleport_keybinds: [Shortcut; 2],
+	pub spawn_teleport_keybinds: [Shortcut; 2],
+	pub delete_teleport_keybinds: [Shortcut; 2],
 
 	pub trigger_sizes: [[f32; 3]; 2],
     pub timer_size: f32,
     pub timer_position: [f32; 2],
+
+    pub input_suppression: bool,
+    pub input_suppression_exceptions: Vec<Key>,
 
 	pub trigger_colors: [[f32; 4]; 2],
 	pub checkpoint_color: [f32; 4],
@@ -57,7 +57,7 @@ pub struct ConfigState {
 
 impl ConfigState {
     pub fn new() -> ConfigState {
-        let mut config = ConfigState {
+        let config = ConfigState {
             // show_ui: true,
             direct_mode: false,
             autosave: false,
@@ -72,21 +72,27 @@ impl ConfigState {
                 Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::K}), None),
                 Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::L}), None),
             ],
-            // spawn_teleport_keybinds: [
-            //     Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Comma}), None),
-            //     Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Period}), None),
-            // ],
             spawn_checkpoint_keybind: Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::C}), None),
 
-            extra_teleport_modifiers: Modifiers { alt: true, ctrl: false, shift: false, mac_cmd: false, command: false },
-            spawn_teleport_modifiers: Modifiers { alt: true, ctrl: false, shift: true, mac_cmd: false, command: false },
-
-            extra_teleport_keybinds: [Default::default(); 10],
-            spawn_teleport_keybinds: [Default::default(); 10],
+            extra_teleport_keybinds: [
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Num1}), None),
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::NONE, logical_key: Key::Num2}), None),
+            ],
+            spawn_teleport_keybinds: [
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Num1}), None),
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::SHIFT, logical_key: Key::Num2}), None),
+            ],
+            delete_teleport_keybinds: [
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::ALT, logical_key: Key::Num1}), None),
+                Shortcut::new(Some(KeyboardShortcut{modifiers: Modifiers::ALT, logical_key: Key::Num2}), None),
+            ],
 
             trigger_sizes: [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
             timer_size: 24.,
             timer_position: [400f32, 50f32],
+
+            input_suppression: true,
+            input_suppression_exceptions: Vec::from([Key::Escape, Key::Enter, Key::Space, Key::W, Key::A, Key::S, Key::D, Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft, Key::ArrowRight]),
 
             trigger_colors: [[0.0, 0.0, 0.0, 0.8], [1.0, 1.0, 1.0, 0.8]],
             checkpoint_color: [0.5, 0.5, 0.5, 0.5],
@@ -98,9 +104,6 @@ impl ConfigState {
 
             shapes_enabled: false,
         };
-
-        config.generate_extra_teleport_keybinds();
-        config.generate_spawn_teleport_keybinds();
 
         config
     }
@@ -135,13 +138,24 @@ impl ConfigState {
             set_if_ok!(self.teleport_keybinds[1], Shortcut::from_string(section.get("teleport_2_keybind").unwrap_or("")));
             set_if_ok!(self.spawn_checkpoint_keybind, Shortcut::from_string(section.get("spawn_checkpoint_keybind").unwrap_or("")));
 
-            set_if_ok!(self.extra_teleport_modifiers, Modifiers::from_string(section.get("extra_teleport_modifiers").unwrap_or("")));
-            set_if_ok!(self.spawn_teleport_modifiers, Modifiers::from_string(section.get("spawn_teleport_modifiers").unwrap_or("")));
+            set_if_ok!(self.extra_teleport_keybinds[0], Shortcut::from_string(section.get("extra_teleport_keybind_0").unwrap_or("")));
+            set_if_ok!(self.extra_teleport_keybinds[1], Shortcut::from_string(section.get("extra_teleport_keybind_1").unwrap_or("")));
+            set_if_ok!(self.spawn_teleport_keybinds[0], Shortcut::from_string(section.get("spawn_teleport_keybind_0").unwrap_or("")));
+            set_if_ok!(self.spawn_teleport_keybinds[1], Shortcut::from_string(section.get("spawn_teleport_keybind_1").unwrap_or("")));
+            set_if_ok!(self.delete_teleport_keybinds[0], Shortcut::from_string(section.get("delete_teleport_keybind_0").unwrap_or("")));
+            set_if_ok!(self.delete_teleport_keybinds[1], Shortcut::from_string(section.get("delete_teleport_keybind_1").unwrap_or("")));
 
             set_if_ok!(self.trigger_sizes[0], serde_json::from_str(section.get("start_trigger_size").unwrap_or("")));
             set_if_ok!(self.trigger_sizes[1], serde_json::from_str(section.get("end_trigger_size").unwrap_or("")));
             set_if_ok!(self.timer_size, serde_json::from_str(section.get("timer_size").unwrap_or("")));
             set_if_ok!(self.timer_position, serde_json::from_str(section.get("timer_position").unwrap_or("")));
+
+            set_if_ok!(self.input_suppression, section.get("input_suppression").unwrap_or("true").parse::<bool>());
+            // set_if_ok!(self.input_suppression_exceptions, serde_json::from_str(section.get("input_suppression_exceptions").unwrap_or("")));
+            if section.contains_key("input_suppression_exceptions") { self.input_suppression_exceptions.clear(); }
+            for keystring in section.get("input_suppression_exceptions").unwrap_or("").split(&['[', ']', ','][..]) {
+                if let Some(key) = Key::from_name(keystring.trim()) { self.input_suppression_exceptions.push(key); }
+            }
 
             set_if_ok!(self.trigger_colors[0], serde_json::from_str(section.get("start_trigger_color").unwrap_or("")));
             set_if_ok!(self.trigger_colors[1], serde_json::from_str(section.get("end_trigger_color").unwrap_or("")));
@@ -162,8 +176,9 @@ impl ConfigState {
         }
         else { error!("'Extra' section not found in config file.") }
 
-        self.generate_extra_teleport_keybinds();
-        self.generate_spawn_teleport_keybinds();
+        // self.generate_extra_teleport_keybinds();
+        // self.generate_spawn_teleport_keybinds();
+        // self.generate_delete_teleport_keybinds();
 
         info!("Config loaded");
         Ok(())
@@ -186,13 +201,23 @@ impl ConfigState {
             .set("teleport_2_keybind", self.teleport_keybinds[1].to_string())
             .set("spawn_checkpoint_keybind", self.spawn_checkpoint_keybind.to_string())
 
-            .set("extra_teleport_modifiers", self.extra_teleport_modifiers.to_string())
-            .set("spawn_teleport_modifiers", self.spawn_teleport_modifiers.to_string())
+            // .set("extra_teleport_modifiers", self.extra_teleport_modifiers.to_string())
+            // .set("spawn_teleport_modifiers", self.spawn_teleport_modifiers.to_string())
+            // .set("delete_teleport_modifiers", self.spawn_teleport_modifiers.to_string())
+            .set("extra_teleport_keybind_0", self.extra_teleport_keybinds[0].to_string())
+            .set("extra_teleport_keybind_1", self.extra_teleport_keybinds[1].to_string())
+            .set("spawn_teleport_keybind_0", self.spawn_teleport_keybinds[0].to_string())
+            .set("spawn_teleport_keybind_1", self.spawn_teleport_keybinds[1].to_string())
+            .set("delete_teleport_keybind_0", self.delete_teleport_keybinds[0].to_string())
+            .set("delete_teleport_keybind_1", self.delete_teleport_keybinds[1].to_string())
 
             .set("start_trigger_size", format!("{:?}", self.trigger_sizes[0]))
             .set("end_trigger_size", format!("{:?}", self.trigger_sizes[1]))
             .set("timer_size", format!("{:?}", self.timer_size))
             .set("timer_position", format!("{:?}", self.timer_position))
+
+            .set("input_suppression", self.input_suppression.to_string())
+            .set("input_suppression_exceptions", format!("{:?}", self.input_suppression_exceptions))
 
             .set("start_trigger_color", format!("{:?}", self.trigger_colors[0]))
             .set("end_trigger_color", format!("{:?}", self.trigger_colors[1]))
@@ -211,20 +236,6 @@ impl ConfigState {
 
         info!("Config saved");
         Ok(())
-    }
-
-    pub fn generate_extra_teleport_keybinds(&mut self) {
-        let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
-        for i in 0..10 {
-            self.extra_teleport_keybinds[i] = Shortcut::new(Some(KeyboardShortcut { modifiers: self.extra_teleport_modifiers, logical_key: keys[i] }), None);
-        }
-    }
-
-    pub fn generate_spawn_teleport_keybinds(&mut self) {
-        let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9, Key::Num0];
-        for i in 0..10 {
-            self.spawn_teleport_keybinds[i] = Shortcut::new(Some(KeyboardShortcut { modifiers: self.spawn_teleport_modifiers, logical_key: keys[i] }), None);
-        }
     }
 }
 
@@ -280,44 +291,6 @@ impl ShortcutString for Shortcut {
         }
 
         Ok(Shortcut::new(Some(keyboard), None))
-    }
-}
-
-trait ModifierString {
-    fn to_string(&self) -> String;
-    fn from_string(stringcut: &str) -> Result<Modifiers, std::io::Error>;
-}
-
-impl ModifierString for Modifiers {
-    fn to_string(&self) -> String {
-        let mut stringcut = "".to_string();
-
-        if self.alt { stringcut += "alt+"};
-        if self.ctrl { stringcut += "ctrl+"};
-        if self.shift { stringcut += "shift+"};
-        if self.mac_cmd { stringcut += "mac_cmd+"};
-        if self.command { stringcut += "command+"};
-
-        stringcut.pop();
-        stringcut
-    }
-
-    fn from_string(stringcut: &str) -> Result<Modifiers, std::io::Error> {
-        let mods: Vec<&str> = stringcut.split("+").collect();
-        let mut modifiers = Modifiers::NONE;
-
-        for m in mods {
-            match m {
-                "alt" => modifiers.alt = true,
-                "ctrl" => modifiers.ctrl = true,
-                "shift" => modifiers.shift = true,
-                "mac_cmd" => modifiers.mac_cmd = true,
-                "command" => modifiers.command = true,
-                _ => error!("Invalid modifier key: {m}"),
-            }
-        }
-
-        Ok(modifiers)
     }
 }
 

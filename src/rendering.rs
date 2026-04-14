@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::{CONFIG_STATE, PATHLOG, RENDER_UPDATES, UISTATE};
+use crate::{CONFIG_STATE, PATHLOG, RENDER_UPDATES, UI_STATE};
 use crate::pathlog::ComparisonMode;
 use crate::ui::ShapeType;
 use crate::pathdata::Path;
@@ -173,30 +173,20 @@ pub fn render_teleports(pintar: &mut Pintar) {
 
     drop(config);
 
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let teleports = ui_state.extra_teleports;
 
     drop(ui_state);
 
-    let lerp = |a: u8, b: u8, t: f32| -> f32 { (a as f32 * (1.0-t) + b as f32 * t) / 255. };
+    // let lerp = |a: u8, b: u8, t: f32| -> f32 { (a as f32 * (1.0-t) + b as f32 * t) / 255. };
 
-    for i in 0..10 {
+    for i in 0..2 {
         if let Some(teleport) = &teleports[i] {
             let pos = teleport.location;
 
-            let p = i as f32 / 10.;
-            let mut color = [
-                lerp(accent_colors[0][0], accent_colors[1][0], p),
-                lerp(accent_colors[0][1], accent_colors[1][1], p),
-                lerp(accent_colors[0][2], accent_colors[1][2], p),
-                lerp(accent_colors[0][3], accent_colors[1][3], p),
-            ];
+            let mut color = [accent_colors[i][0] as f32 / 255., accent_colors[i][1] as f32 / 255., accent_colors[i][2] as f32 / 255., accent_colors[i][3] as f32 / 255.];
 
-            // info!("DEBUG: color: {color:?}");
-            // let mut color = trigger_colors[0];
-            // color[3] = 0.5;
-            // pos[1] += 1.0;
             pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.6, 0.05, 0.6]).translate(pos));
             color[3] *= 0.25;
             pintar.add_default_mesh(TELEPORTS_GROUP.to_string(), pintar::primitives::cylinder::new(color).scale([0.5, 0.052, 0.5]).translate(pos));
@@ -204,9 +194,8 @@ pub fn render_teleports(pintar: &mut Pintar) {
     }
 }
 
-// fn render_custom_shapes(pintar: &mut Pintar, egui: &UIState) {
 pub fn render_custom_shapes(pintar: &mut Pintar) {
-    let ui_state = UISTATE.lock().unwrap();
+    let ui_state = UI_STATE.lock().unwrap();
 
     let custom_shapes = ui_state.custom_shapes.clone();
 

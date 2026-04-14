@@ -1,11 +1,12 @@
 use std::collections::VecDeque;
+use egui::Key;
 use uuid::Uuid;
 use std::sync::mpsc;
 use std::thread;
 use native_dialog::FileDialog;
 
 use tracing::*;
-use crate::{gamedata, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, UISTATE, RX};
+use crate::{gamedata, RenderUpdates, CONFIG_STATE, EVENTS, PATHLOG, RENDER_UPDATES, UI_STATE, RX};
 use crate::pathdata::{HighPassFilter, FILE_EXTENTION};
 use crate::config::CONFIG_FILE_NAME;
 use crate::ui::{Teleport, TeleportIndex};
@@ -41,6 +42,11 @@ pub enum CelEvent {
         id: Uuid,
         new_name: String,
     },
+    MoveCollection {
+        id: Uuid,
+        direction: usize,
+        to_end: bool,
+    },
     DeleteCollection {
         id: Uuid,
     },
@@ -75,9 +81,18 @@ pub enum CelEvent {
     SpawnTeleport {
         index: TeleportIndex,
     },
+    DeleteTeleport {
+        index: TeleportIndex,
+    },
     RenderUpdate {
         update: RenderUpdates,
-    }
+    },
+    NewException {
+        key: Key,
+    },
+    RemoveException {
+        key: Key,
+    },
 }
 
 pub fn process_events() {
@@ -123,7 +138,7 @@ pub fn process_events() {
                 }
 
                 let mut main_triggers = PATHLOG.lock().unwrap().main_triggers;
-                let mut main_teleports = UISTATE.lock().unwrap().main_teleports;
+                let mut main_teleports = UI_STATE.lock().unwrap().main_teleports;
 
                 for t in 0..2 {
                     if let Some(trigger) = main_triggers[t] {
@@ -135,7 +150,7 @@ pub fn process_events() {
                 }
 
                 PATHLOG.lock().unwrap().main_triggers = main_triggers;
-                UISTATE.lock().unwrap().main_teleports = main_teleports;
+                UI_STATE.lock().unwrap().main_teleports = main_teleports;
             }
             CelEvent::StartRecording => {
                 PATHLOG.lock().unwrap().start();
@@ -157,13 +172,16 @@ pub fn process_events() {
             }
             CelEvent::ClearTriggers => {
                 PATHLOG.lock().unwrap().clear_triggers();
-                UISTATE.lock().unwrap().main_teleports = [None; 2];
+                UI_STATE.lock().unwrap().main_teleports = [None; 2];
             }
             CelEvent::CreateCollection => {
                 PATHLOG.lock().unwrap().create_collection();
             }
             CelEvent::RenameCollection { id, new_name } => {
                 PATHLOG.lock().unwrap().rename_collection(id, new_name);
+            }
+            CelEvent::MoveCollection { id, direction, to_end } => {
+                PATHLOG.lock().unwrap().move_collection(id, direction, to_end);
             }
             CelEvent::DeleteCollection { id } => {
                 PATHLOG.lock().unwrap().delete_collection(id);
@@ -243,7 +261,7 @@ pub fn process_events() {
                 drop(pathlog);
             }
             CelEvent::SaveComparison => {
-                let mut ui_state = UISTATE.lock().unwrap();
+                let mut ui_state = UI_STATE.lock().unwrap();
 
                 if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
@@ -265,13 +283,13 @@ pub fn process_events() {
                         if let Ok(Some(path)) = dialog_result {
                             PATHLOG.lock().unwrap().save_comparison(path.to_str().unwrap().to_string());
                         }
-                        UISTATE.lock().unwrap().file_path_rx = None;
+                        UI_STATE.lock().unwrap().file_path_rx = None;
                     }
                     else { loop_events.push_back(CelEvent::SaveComparison); }
                 }
             }
             CelEvent::LoadComparison => {
-                let mut ui_state = UISTATE.lock().unwrap();
+                let mut ui_state = UI_STATE.lock().unwrap();
 
                 if ui_state.file_path_rx.is_none() {
                     let (tx, rx) = mpsc::channel();
@@ -294,13 +312,13 @@ pub fn process_events() {
                             let load_res = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string());
                             // if let Err(e) = PATHLOG.lock().unwrap().load_comparison(path.to_str().unwrap().to_string()) {
                             if let Err(e) = load_res {
-                                UISTATE.lock().unwrap().file_path_rx = None;
+                                UI_STATE.lock().unwrap().file_path_rx = None;
                                 error!("{e}");
                                 continue;
                             }
 
                             if let Some(start_trigger) = PATHLOG.lock().unwrap().main_triggers[0] {
-                                UISTATE.lock().unwrap().main_teleports[0] = Some(Teleport {
+                                UI_STATE.lock().unwrap().main_teleports[0] = Some(Teleport {
                                     location: start_trigger.position,
                                     rotation: start_trigger.rotation(),
                                     camera_rotation: None,
@@ -308,7 +326,7 @@ pub fn process_events() {
                             }
 
                             if let Some(end_trigger) = PATHLOG.lock().unwrap().main_triggers[1] {
-                                UISTATE.lock().unwrap().main_teleports[1] = Some(Teleport {
+                                UI_STATE.lock().unwrap().main_teleports[1] = Some(Teleport {
                                     location: end_trigger.position,
                                     rotation: end_trigger.rotation(),
                                     camera_rotation: None,
@@ -316,7 +334,7 @@ pub fn process_events() {
                             }
                         }
 
-                        UISTATE.lock().unwrap().file_path_rx = None;
+                        UI_STATE.lock().unwrap().file_path_rx = None;
                         loop_events.push_back(CelEvent::RenderUpdate { update: RenderUpdates::paths() });
                     }
                     else { loop_events.push_back(CelEvent::LoadComparison); }
@@ -369,10 +387,10 @@ pub fn process_events() {
             CelEvent::Teleport { index } => {
                 let t = match index {
                     TeleportIndex::Main { i } => {
-                        UISTATE.lock().unwrap().main_teleports[i]
+                        UI_STATE.lock().unwrap().main_teleports[i]
                     },
                     TeleportIndex::Extra { i } => {
-                        UISTATE.lock().unwrap().extra_teleports[i]
+                        UI_STATE.lock().unwrap().extra_teleports[i]
                     },
                 };
 
@@ -393,10 +411,20 @@ pub fn process_events() {
 
                 match index {
                     TeleportIndex::Main { i } => {
-                        UISTATE.lock().unwrap().main_teleports[i] = teleport;
+                        UI_STATE.lock().unwrap().main_teleports[i] = teleport;
                     },
                     TeleportIndex::Extra { i } => {
-                        UISTATE.lock().unwrap().extra_teleports[i] = teleport;
+                        UI_STATE.lock().unwrap().extra_teleports[i] = teleport;
+                    },
+                }
+            }
+            CelEvent::DeleteTeleport { index } => {
+                match index {
+                    TeleportIndex::Main { i } => {
+                        UI_STATE.lock().unwrap().main_teleports[i] = None;
+                    },
+                    TeleportIndex::Extra { i } => {
+                        UI_STATE.lock().unwrap().extra_teleports[i] = None;
                     },
                 }
             }
@@ -406,6 +434,18 @@ pub fn process_events() {
                 if update.paths {
                     PATHLOG.lock().unwrap().update_visible();
                 }
+            }
+            CelEvent::NewException { key } => {
+                if !CONFIG_STATE.lock().unwrap().input_suppression_exceptions.contains(&key) {
+                    CONFIG_STATE.lock().unwrap().input_suppression_exceptions.push(key);
+                }
+            }
+            CelEvent::RemoveException { key } => {
+                let mut config_state = CONFIG_STATE.lock().unwrap();
+                if let Some(i) = config_state.input_suppression_exceptions.iter().position(|x| *x == key) {
+                    config_state.input_suppression_exceptions.remove(i);
+                }
+                drop(config_state);
             }
         }
     }
